@@ -13,32 +13,34 @@ import (
 )
 
 type settings struct {
-	Addr             string          `json:"addr"`
-	Database         string          `json:"database"`
-	Models           []string        `json:"models"`
-	DefaultModel     string          `json:"default_model"`
-	RequestTimeout   config.Duration `json:"request_timeout"`
-	RefreshBefore    config.Duration `json:"refresh_before"`
-	MaxAttempts      int             `json:"max_attempts"`
-	AppVersion       string          `json:"app_version"`
-	Surface          string          `json:"surface"`
-	OutpostID        string          `json:"outpost_id"`
-	WorkingSessionID string          `json:"working_session_id"`
-	Timezone         string          `json:"timezone"`
-	Locale           string          `json:"locale"`
-	ThinkingEffort   string          `json:"thinking_effort"`
-	ChatAgentID      string          `json:"chat_agent_id"`
-	KeepSessions     bool            `json:"keep_sessions"`
-	SessionReuse     bool            `json:"session_reuse"`
-	SessionTTL       config.Duration `json:"session_ttl"`
-	OAuth            config.OAuth    `json:"oauth"`
-	WebUI            config.WebUI    `json:"webui"`
-	Usage            config.Usage    `json:"usage"`
+	Addr             string            `json:"addr"`
+	Database         string            `json:"database"`
+	Models           []string          `json:"models"`
+	ModelMappings    map[string]string `json:"model_mappings"`
+	DefaultModel     string            `json:"default_model"`
+	RequestTimeout   config.Duration   `json:"request_timeout"`
+	RefreshBefore    config.Duration   `json:"refresh_before"`
+	MaxAttempts      int               `json:"max_attempts"`
+	AppVersion       string            `json:"app_version"`
+	Surface          string            `json:"surface"`
+	OutpostID        string            `json:"outpost_id"`
+	WorkingSessionID string            `json:"working_session_id"`
+	Timezone         string            `json:"timezone"`
+	Locale           string            `json:"locale"`
+	ThinkingEffort   string            `json:"thinking_effort"`
+	ChatAgentID      string            `json:"chat_agent_id"`
+	KeepSessions     bool              `json:"keep_sessions"`
+	SessionReuse     bool              `json:"session_reuse"`
+	SessionTTL       config.Duration   `json:"session_ttl"`
+	OAuth            config.OAuth      `json:"oauth"`
+	WebUI            config.WebUI      `json:"webui"`
+	Usage            config.Usage      `json:"usage"`
 }
 
 func settingsFromConfig(cfg config.Config) settings {
 	return settings{
 		Addr: cfg.Addr, Database: cfg.Database, Models: cfg.Models, DefaultModel: cfg.DefaultModel,
+		ModelMappings:  cfg.ModelMappings,
 		RequestTimeout: cfg.RequestTimeout, RefreshBefore: cfg.RefreshBefore, MaxAttempts: cfg.MaxAttempts,
 		AppVersion: cfg.AppVersion, Surface: cfg.Surface, OutpostID: cfg.OutpostID,
 		WorkingSessionID: cfg.WorkingSessionID, Timezone: cfg.Timezone, Locale: cfg.Locale,
@@ -50,6 +52,7 @@ func settingsFromConfig(cfg config.Config) settings {
 func (value settings) config(keys []string, path string) config.Config {
 	return config.Config{
 		Addr: value.Addr, Database: value.Database, APIKeys: keys, Models: value.Models, DefaultModel: value.DefaultModel,
+		ModelMappings:  value.ModelMappings,
 		RequestTimeout: value.RequestTimeout, RefreshBefore: value.RefreshBefore, MaxAttempts: value.MaxAttempts,
 		AppVersion: value.AppVersion, Surface: value.Surface, OutpostID: value.OutpostID,
 		WorkingSessionID: value.WorkingSessionID, Timezone: value.Timezone, Locale: value.Locale,
@@ -123,8 +126,8 @@ func validAPIKey(key string) bool {
 
 func (s *Server) writeSettingsLocked(w http.ResponseWriter) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"settings": settingsFromConfig(s.saved), "api_keys_count": len(s.saved.APIKeys),
-		"restart_required": s.restartNeeded, "overrides": map[string]bool{"addr": s.addrOverridden},
+		"settings": settingsFromConfig(s.saved), "api_keys_count": len(s.cfg.APIKeys),
+		"restart_required": s.restartNeeded, "overrides": map[string]bool{"addr": s.addrOverridden, "api_keys": s.cfg.APIKeysFromEnv()},
 	})
 }
 
@@ -154,6 +157,10 @@ func (s *Server) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 	defer s.configMu.Unlock()
 	keys := s.saved.APIKeys
 	if input.APIKeys != nil {
+		if s.cfg.APIKeysFromEnv() {
+			writeError(w, 400, "api_keys_overridden", "API keys are managed by QUICKPROXY_API_KEYS; update the process environment instead")
+			return
+		}
 		if len(*input.APIKeys) > 256 {
 			writeError(w, http.StatusBadRequest, "invalid_api_keys", "At most 256 API keys are allowed")
 			return

@@ -40,6 +40,7 @@ func NewUpstream(cfg *config.Config) *Upstream {
 
 // ChatInput is one upstream turn.
 type ChatInput struct {
+	Images        []imageInput
 	Messages      []Message
 	Prompt        string
 	Model         string
@@ -72,7 +73,7 @@ type Usage struct {
 func (u *Usage) add(v Usage) {
 	u.PromptTokens += max(v.PromptTokens, 0)
 	u.CompletionTokens += max(v.CompletionTokens, 0)
-	u.TotalTokens += max(v.PromptTokens, 0) + max(v.CompletionTokens, 0)
+	u.TotalTokens += max(v.TotalTokens, max(v.PromptTokens, 0)+max(v.CompletionTokens, 0)+max(v.CacheReadTokens, 0)+max(v.CacheWriteTokens, 0))
 	u.CacheReadTokens += max(v.CacheReadTokens, 0)
 	u.CacheWriteTokens += max(v.CacheWriteTokens, 0)
 	if v.CostUSD != nil && *v.CostUSD >= 0 && !math.IsNaN(*v.CostUSD) && !math.IsInf(*v.CostUSD, 0) {
@@ -94,10 +95,11 @@ type StreamEvent struct {
 type EventFunc func(StreamEvent) error
 
 type ChatResult struct {
-	Text      string
-	ToolCalls []ToolCallState
-	Usage     Usage
-	ThreadID  string
+	ContextMode string
+	Text        string
+	ToolCalls   []ToolCallState
+	Usage       Usage
+	ThreadID    string
 }
 
 // Chat sends one prompt through the QuickWork chat bidi WebSocket. Text
@@ -236,6 +238,25 @@ func (u *Upstream) Chat(ctx context.Context, sess *Session, in ChatInput, onEven
 	if id := strings.TrimSpace(in.ChatAgentID); id != "" {
 		payload["chat_agent_id"] = id
 	}
+	contextMode := "inline"
+	if len(in.Images) > 0 {
+		if isGatewayProvider(sess.Provider) {
+			return ChatResult{}, fmt.Errorf("image attachments are not supported for gateway accounts")
+		}
+		attachments := []map[string]any{}
+		for _, picture := range in.Images {
+			att, err := uploadAttachment(ctx, sess, threadID, picture.Name, picture.MIME, picture.Data)
+			if err != nil {
+				return ChatResult{}, fmt.Errorf("image attachment upload failed: %w", err)
+			}
+			meta := map[string]any{"type": "file", "name": att.Name, "size": att.Size, "mimeType": picture.MIME, "path": att.Path}
+			if att.ID != "" {
+				meta["attachmentId"] = att.ID
+			}
+			attachments = append(attachments, meta)
+		}
+		payload["attachments"] = attachments
+	}
 	// The service ignores a per-turn "system_prompt" field and treats
 	// "custom_prompt" as low-trust saved preferences, so caller instructions are
 	// carried at the head of the user_message text instead (see relayPrompt).
@@ -268,7 +289,9 @@ func (u *Upstream) Chat(ctx context.Context, sess *Session, in ChatInput, onEven
 					if att.ID != "" {
 						meta["attachmentId"] = att.ID
 					}
-					payload["attachments"] = []map[string]any{meta}
+					attachments, _ := payload["attachments"].([]map[string]any)
+					payload["attachments"] = append(attachments, meta)
+					contextMode = "attachment"
 					log.Printf("user_message attachment thread=%s bytes=%d name=%s id=%s path=%s",
 						threadID, att.Size, att.Name, att.ID, att.Path)
 				}
@@ -276,14 +299,19 @@ func (u *Upstream) Chat(ctx context.Context, sess *Session, in ChatInput, onEven
 		}
 	}
 
+	beforeFit, _ := payload["text"].(string)
 	if err := fitUserMessage(payload, in); err != nil {
 		return ChatResult{}, err
+	}
+	if payload["text"] != beforeFit {
+		contextMode = "trimmed"
 	}
 	if err := send(map[string]any{"type": "user_message", "payload": payload}); err != nil {
 		return ChatResult{}, fmt.Errorf("send user_message: %w", err)
 	}
 
 	result, err := u.readEvents(ctx, conn, gateway, threadID, onEvent)
+	result.ContextMode = contextMode
 	result.ThreadID = threadID
 	if in.DeleteSession {
 		_ = send(map[string]any{"type": "session_delete", "payload": map[string]any{"session_id": threadID}})
@@ -906,8 +934,13 @@ func fitUserMessage(payload map[string]any, in ChatInput) error {
 	if err != nil || n <= maxUserMessageBytes {
 		return err
 	}
-	if payload["attachments"] != nil {
-		return ErrUserMessageTooLarge
+	if attachments, ok := payload["attachments"].([]map[string]any); ok {
+		for _, att := range attachments {
+			name, _ := att["name"].(string)
+			if strings.HasPrefix(name, attachmentPromptPrefix) && att["mimeType"] == attachmentMimeType {
+				return ErrUserMessageTooLarge
+			}
+		}
 	}
 	payload["text"] = relayPrompt(in.SystemPrompt, "")
 	fixed, err := userMessageBytes(payload)

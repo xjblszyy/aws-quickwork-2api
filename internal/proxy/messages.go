@@ -162,6 +162,8 @@ func contentText(v any) string {
 					if t, ok := p["text"].(string); ok {
 						b.WriteString(t)
 					}
+				case "image":
+					b.WriteString("[attached image]")
 				case "image_url":
 					u := imagePartURL(p)
 					if strings.HasPrefix(u, "data:") {

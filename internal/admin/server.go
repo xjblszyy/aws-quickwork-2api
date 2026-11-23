@@ -76,6 +76,8 @@ func NewServer(cfg *config.Config, st *store.Store, mgr *accounts.Manager, addrO
 	server.routes.HandleFunc("POST /api/logins/{id}/callback", server.handleLoginCallback)
 	server.routes.HandleFunc("DELETE /api/logins/{id}", server.handleLoginCancel)
 	server.routes.HandleFunc("GET /api/config", server.handleConfigGet)
+	server.routes.HandleFunc("GET /api/requests", server.handleRequests)
+	server.routes.HandleFunc("GET /api/requests/{id}", server.handleRequestDetail)
 	server.routes.HandleFunc("PUT /api/config", server.handleConfigSave)
 	server.routes.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "not_found", "Management endpoint not found")

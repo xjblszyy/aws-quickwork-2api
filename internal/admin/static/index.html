@@ -36,6 +36,7 @@
         <nav class="navigation" data-i18n-aria-label="managementPages" aria-label="Management pages">
           <button class="nav-item active" type="button" data-page="overview" aria-current="page"><span aria-hidden="true">◫</span><span class="nav-text" data-i18n="overview">Overview</span></button>
           <button class="nav-item" type="button" data-page="accounts"><span aria-hidden="true">◎</span><span class="nav-text" data-i18n="accounts">Accounts</span></button>
+          <button class="nav-item" type="button" data-page="records"><span aria-hidden="true">≡</span><span class="nav-text" data-i18n="requestRecords">Usage records</span></button>
           <button class="nav-item" type="button" data-page="config"><span aria-hidden="true">⚙</span><span class="nav-text" data-i18n="settings">Settings</span></button>
           <button class="nav-item" type="button" data-page="playground"><span aria-hidden="true">▷</span><span class="nav-text" data-i18n="playground">Playground</span></button>
         </nav>
@@ -134,6 +135,16 @@
           <section id="page-config" class="page" data-i18n-aria-label="settings" aria-label="Settings" hidden>
             <div class="page-intro"><div><h2 data-i18n="serviceSettings">Service settings</h2><p class="muted" data-i18n="settingsIntro">Changes are saved to disk, not hot-reloaded into the running process.</p></div><span class="badge neutral" data-i18n="restartRequired">Restart required after saving</span></div>
             <form id="config-form" class="stack">
+              <article class="panel stack">
+                <h3 data-i18n="clientAccess">Client access</h3>
+                <p class="muted" data-i18n="accessHint">Use a separate inference API key. Only share the API endpoint, never your administrator password. Use HTTPS and a restricted reverse proxy for remote access.</p>
+                <div><label for="openai-base-url">OpenAI Base URL</label><input id="openai-base-url" readonly></div>
+                <div><label for="anthropic-base-url">Anthropic Base URL</label><input id="anthropic-base-url" readonly></div>
+                <p class="field-hint">Chat: /v1/chat/completions · Responses: /v1/responses · Messages: /v1/messages</p>
+                <div><label for="model-mappings" data-i18n="modelMappings">Model mappings (JSON)</label><textarea id="model-mappings" class="code-input" rows="4" spellcheck="false" placeholder='{"opus5.5":"smart"}'></textarea></div>
+                <p class="field-hint" data-i18n="mappingHint">Map client model names to smart, fast, balanced or auto. Saved changes require a restart.</p>
+                <details><summary data-i18n="clientExamples">Client configuration examples and compatibility notes</summary><pre id="client-config-examples" class="response-output"></pre><p class="field-hint" data-i18n="compatibilityNotes">Images: base64 PNG/JPEG/GIF only, up to 8 images and 5 MiB each. Remote URL fetching is disabled. Compaction items require the same API key. Token counting is estimated. Native hosted web search and previous_response_id are not supported.</p></details>
+              </article>
               <article class="panel">
                 <div class="panel-heading"><h3 data-i18n="configuration">Configuration</h3><button id="reload-config" class="button" type="button" data-i18n="reload">Reload</button></div>
                 <p class="notice warning" data-i18n="settingsWarning">Keep the complete JSON structure. Listener, database, and WebUI changes require a restart. Disabling the WebUI will make this console unavailable.</p>
@@ -144,9 +155,12 @@
               </article>
               <article class="panel">
                 <div class="panel-heading"><h3 data-i18n="inferenceKeys">Inference API keys</h3><span id="api-key-count" class="badge neutral">—</span></div>
+                <p id="api-key-env-notice" class="notice warning" data-i18n="envKeyNotice" hidden>API keys are managed by QUICKPROXY_API_KEYS. Update the service environment to rotate them.</p>
                 <p class="muted" data-i18n="keysHint">Existing keys are never sent to the browser. Leave blank to keep them; new values replace all keys.</p>
                 <label for="replacement-api-keys" data-i18n="replacementKeys">Replacement keys (one per line, optional)</label>
                 <textarea id="replacement-api-keys" rows="3" autocomplete="off" spellcheck="false"></textarea>
+                <button id="generate-api-key" class="button" type="button" data-i18n="generateKey">Generate a replacement API key</button>
+                <p class="field-hint" data-i18n="generateKeyHint">Copy the generated key before saving. Saving replaces existing keys; keys cannot be retrieved later.</p>
                 <label class="checkbox-label" for="clear-api-keys"><input id="clear-api-keys" type="checkbox"><span data-i18n="clearAllKeys">Clear all API keys (disable key authentication for inference)</span></label>
               </article>
               <div class="save-bar"><span class="muted" data-i18n="saveHint">After a successful save, restart the service to apply the new settings.</span><button id="save-config" class="button primary" type="submit" data-i18n="saveSettings">Save settings</button></div>
@@ -158,6 +172,7 @@
             <div class="playground-grid">
               <form id="playground-form" class="panel stack">
                 <h3 data-i18n="sendMessage">Send a message</h3>
+                <div><label for="playground-protocol" data-i18n="protocol">Protocol</label><select id="playground-protocol"><option value="chat">Chat Completions</option><option value="responses">Responses</option><option value="messages">Claude Messages</option></select></div>
                 <div><label for="playground-model" data-i18n="modelAlias">Model alias</label><select id="playground-model" required></select></div>
                 <div><label for="playground-api-key" data-i18n="inferenceKeyLabel">Inference API key (not the administrator password)</label><input id="playground-api-key" type="password" autocomplete="off"><p id="playground-auth-hint" class="field-hint" data-i18n="keyMemoryHint">The key stays in this page's memory and is cleared on sign-out.</p></div>
                 <div><label for="playground-prompt" data-i18n="message">Message</label><textarea id="playground-prompt" rows="10" required></textarea></div>
@@ -165,6 +180,18 @@
               </form>
               <article class="panel response-panel"><div class="panel-heading"><h3 data-i18n="modelResponse">Model response</h3><button id="clear-playground" class="button subtle" type="button" data-i18n="clearOutput">Clear output</button></div><p id="playground-state" class="muted" role="status" data-i18n="noRequest">No request sent</p><pre id="playground-output" class="response-output" aria-live="polite"></pre></article>
             </div>
+          </section>
+          <section id="page-records" class="page" hidden>
+            <div class="page-intro"><div><h2 data-i18n="requestRecords">Usage records</h2><p class="muted" data-i18n="recordsHint">One record per client request, including failures. No prompts, responses, images or API keys are stored. Retained for 30 days, up to 10,000 records.</p></div></div>
+            <form id="records-filter" class="panel toolbar">
+              <label for="records-protocol" data-i18n="protocol">Protocol</label><select id="records-protocol" class="language-select"><option value="" data-i18n="allProtocols">All protocols</option><option value="chat">Chat</option><option value="responses">Responses</option><option value="messages">Messages</option><option value="compact">Compact</option></select>
+              <label for="records-model" data-i18n="modelAlias">Model alias</label><input id="records-model" class="record-model-filter" maxlength="128">
+              <label class="checkbox-label"><input id="records-failed" type="checkbox"><span data-i18n="failedOnly">Failures only</span></label>
+              <button class="button" type="submit" data-i18n="refresh">Refresh</button>
+            </form>
+            <article class="panel table-panel"><div class="table-scroll"><table><thead><tr><th data-i18n="requestTime">Time / ID</th><th data-i18n="protocol">Protocol</th><th data-i18n="modelRoute">Requested → upstream</th><th data-i18n="status">Status</th><th data-i18n="requestDuration">Duration / attempts</th><th>Tokens</th><th data-i18n="account">Account</th><th data-i18n="actions">Actions</th></tr></thead><tbody id="records-body"></tbody></table></div><p id="records-empty" class="empty-state" data-i18n="noRecords" hidden>No request records yet.</p></article>
+            <div class="toolbar"><button id="records-prev" class="button" type="button" data-i18n="previousPage">Previous</button><span id="records-pagination" role="status"></span><button id="records-next" class="button" type="button" data-i18n="nextPage">Next</button></div>
+            <article id="record-detail-panel" class="panel" hidden><div class="panel-heading"><h3 data-i18n="recordDetail">Request details</h3><button id="record-detail-close" class="button subtle" type="button" data-i18n="closeDetail">Close</button></div><pre id="record-detail" class="response-output"></pre></article>
           </section>
         </main>
         <footer class="workspace-footer" data-i18n="footer">QuickWork OpenAI · Upstream access credentials are never displayed in the console.</footer>

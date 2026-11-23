@@ -2,11 +2,13 @@ package proxy
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
 	"net/http"
+	"sort"
 	"strings"
 	"time"
 
@@ -16,21 +18,30 @@ import (
 )
 
 type Server struct {
-	cfg      *config.Config
-	accounts *accounts.Manager
-	tokens   *APIKeyAuth
-	upstream *Upstream
-	sessions *conversationStore
+	cfg           *config.Config
+	accounts      *accounts.Manager
+	tokens        *APIKeyAuth
+	upstream      chatBackend
+	sessions      *conversationStore
+	compactionKey [32]byte
+}
+
+type chatBackend interface {
+	Chat(context.Context, *Session, ChatInput, EventFunc) (ChatResult, error)
 }
 
 func NewServer(cfg *config.Config, mgr *accounts.Manager) *Server {
-	return &Server{
+	server := &Server{
 		cfg:      cfg,
 		accounts: mgr,
 		tokens:   NewAPIKeyAuth(cfg.APIKeys),
 		upstream: NewUpstream(cfg),
 		sessions: newConversationStore(cfg.SessionTTL.Duration(), 256),
 	}
+	if _, err := rand.Read(server.compactionKey[:]); err != nil {
+		panic("could not initialize compaction encryption")
+	}
+	return server
 }
 
 func (s *Server) Handler() http.Handler {
@@ -38,14 +49,19 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/healthz", s.handleHealth)
 	mux.HandleFunc("/v1/models", s.handleModels)
 	mux.HandleFunc("/v1/chat/completions", s.handleChat)
-	return s.withCORS(mux)
+	mux.HandleFunc("/v1/responses", s.handleResponses)
+	mux.HandleFunc("/v1/responses/compact", s.handleCompact)
+	mux.HandleFunc("/v1/messages", s.handleMessages)
+	mux.HandleFunc("/v1/messages/count_tokens", s.handleCountTokens)
+	return s.withCORS(s.withRequestRecords(mux))
 }
 
 func (s *Server) withCORS(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Api-Key, X-Thread-Id, X-Conversation-Id")
+		w.Header().Set("Access-Control-Allow-Headers", "Authorization, Content-Type, X-Api-Key, X-Thread-Id, X-Conversation-Id, Anthropic-Version, Anthropic-Beta, OpenAI-Beta")
 		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Expose-Headers", "X-Request-Id")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
@@ -69,7 +85,17 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 	}
 	created := time.Now().Unix()
 	data := make([]map[string]any, 0, len(s.cfg.Models))
-	for _, id := range s.cfg.Models {
+	models := append([]string(nil), s.cfg.Models...)
+	for alias := range s.cfg.ModelMappings {
+		models = append(models, alias)
+	}
+	sort.Strings(models)
+	seen := make(map[string]bool)
+	for _, id := range models {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
 		data = append(data, map[string]any{
 			"id":       id,
 			"object":   "model",
@@ -91,13 +117,26 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var req ChatRequest
-	dec := json.NewDecoder(http.MaxBytesReader(w, r.Body, 8<<20))
-	if err := dec.Decode(&req); err != nil {
-		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "invalid JSON body: "+err.Error())
+	if !s.decodeInference(w, r, &req) {
 		return
+	}
+	s.executeChat(w, r, req)
+}
+
+// executeChat is the common account, retry, session and tool execution path
+// for Chat Completions, Responses and Messages.
+func (s *Server) executeChat(w http.ResponseWriter, r *http.Request, req ChatRequest) {
+	if row := requestRecord(r); row != nil {
+		row.Model = req.Model
+		row.Stream = req.Stream
 	}
 	if req.N > 1 {
 		writeOpenAIError(w, http.StatusBadRequest, "invalid_request_error", "n > 1 is not supported")
+		return
+	}
+	images, err := imageInputs(req.Messages)
+	if err != nil {
+		writeOpenAIError(w, 400, "invalid_image", err.Error())
 		return
 	}
 
@@ -107,6 +146,16 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	model := s.mapModel(req.Model)
+	responseModel := strings.TrimSpace(req.Model)
+	if responseModel == "" {
+		responseModel = model
+	}
+	if row := requestRecord(r); row != nil {
+		row.Model = responseModel
+		row.UpstreamModel = model
+		row.Stream = req.Stream
+		row.Images = len(images)
+	}
 	allowedTools := requestedToolNames(&req)
 	choiceMode, choiceName := parseToolChoice(req.ToolChoice)
 	if choiceMode == "function" && choiceName != "" {
@@ -146,10 +195,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), s.cfg.RequestTimeout.Duration())
 	defer cancel()
 
-	threadID := strings.TrimSpace(r.Header.Get("X-Thread-Id"))
+	// Client conversation IDs are scoped cache keys, never raw upstream IDs.
+	threadID := ""
 	id := "chatcmpl-" + strings.ReplaceAll(uuid(), "-", "")
 	created := time.Now().Unix()
 	in := ChatInput{
+		Images:        images,
 		Prompt:        promptText,
 		Messages:      promptMessages,
 		Model:         model,
@@ -161,6 +212,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		DeleteSession: !s.cfg.SessionReuse && !s.cfg.KeepSessions,
 	}
 	if resume {
+		in.Images, _ = imageInputs(promptMessages)
 		in.ThreadID = conv.threadID
 		in.CreateSession = false
 	}
@@ -183,6 +235,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		in.CreateSession = true
 		in.Prompt = prompt
 		in.Messages = req.Messages
+		in.Images = images
 	}
 	responseOutput := func(result ChatResult) (string, []ToolCall) {
 		text := result.Text
@@ -257,8 +310,25 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			return acct, sess, nil
 		}
 	}
-	runChat := func(onEvent EventFunc, streamStarted func() bool, resetOutput func()) (ChatResult, error) {
-		var res ChatResult
+	runChat := func(onEvent EventFunc, streamStarted func() bool, resetOutput func()) (res ChatResult, finalErr error) {
+		defer func() {
+			if row := requestRecord(r); row != nil {
+				row.Attempts = attempts
+				if usedAccount != nil {
+					row.AccountID = usedAccount.ID
+				}
+				row.ContextMode = res.ContextMode
+				if row.Protocol == "compact" && finalErr == nil {
+					row.ContextMode = "summary"
+				}
+				_, calls := responseOutput(res)
+				row.ToolCalls = len(calls)
+				if finalErr != nil {
+					_, row.ErrorCode = chatErrorStatus(finalErr)
+					row.Error = "Upstream request failed (" + row.ErrorCode + ")"
+				}
+			}
+		}()
 		var lastErr error
 		for attempts < maxAttempts {
 			if attempts > 0 {
@@ -300,6 +370,25 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 				Credits:          res.Usage.Credits,
 				Success:          err == nil,
 			})
+			if row := requestRecord(r); row != nil {
+				attempt := store.RequestAttempt{AccountID: acct.ID, DurationMS: attemptDuration.Milliseconds(), TotalTokens: res.Usage.TotalTokens}
+				if err != nil {
+					_, attempt.ErrorCode = chatErrorStatus(err)
+				}
+				row.AttemptDetails = append(row.AttemptDetails, attempt)
+				row.PromptTokens += res.Usage.PromptTokens + res.Usage.CacheReadTokens + res.Usage.CacheWriteTokens
+				row.CompletionTokens += res.Usage.CompletionTokens
+				row.TotalTokens += res.Usage.TotalTokens
+				row.CacheReadTokens += res.Usage.CacheReadTokens
+				row.CacheWriteTokens += res.Usage.CacheWriteTokens
+				if res.Usage.CostUSD != nil {
+					if row.CostUSD == nil {
+						cost := 0.0
+						row.CostUSD = &cost
+					}
+					*row.CostUSD += *res.Usage.CostUSD
+				}
+			}
 			if err == nil {
 				return res, nil
 			}
@@ -354,7 +443,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			conv.reset()
 			status, code := chatErrorStatus(lastErr)
 			logChatDone(id, startedAt, in, usedAccount, attempts, "failed", "", res.Usage, 0, lastErr)
-			writeOpenAIError(w, status, code, lastErr.Error())
+			writeOpenAIError(w, status, code, publicChatError(code))
 			return
 		}
 		if s.cfg.SessionReuse && res.ThreadID != "" {
@@ -382,7 +471,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			"id":      id,
 			"object":  "chat.completion",
 			"created": created,
-			"model":   model,
+			"model":   responseModel,
 			"choices": []map[string]any{{
 				"index":         0,
 				"message":       message,
@@ -421,7 +510,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			"id":      id,
 			"object":  "chat.completion.chunk",
 			"created": created,
-			"model":   model,
+			"model":   responseModel,
 			"choices": []map[string]any{{
 				"index":         0,
 				"delta":         map[string]any{"role": "assistant"},
@@ -438,7 +527,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			"id":      id,
 			"object":  "chat.completion.chunk",
 			"created": created,
-			"model":   model,
+			"model":   responseModel,
 			"choices": []map[string]any{{
 				"index":         0,
 				"delta":         delta,
@@ -483,11 +572,11 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		if !started {
 			status, code := chatErrorStatus(lastErr)
 			logChatDone(id, startedAt, in, usedAccount, attempts, "failed", "", res.Usage, 0, lastErr)
-			writeOpenAIError(w, status, code, lastErr.Error())
+			writeOpenAIError(w, status, code, publicChatError(code))
 			return
 		}
 		logChatDone(id, startedAt, in, usedAccount, attempts, "failed", "", res.Usage, 0, lastErr)
-		writeStreamError(lastErr.Error())
+		writeStreamError(publicChatError("upstream_error"))
 		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 		flusher.Flush()
 		return
@@ -530,7 +619,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 			"id":      id,
 			"object":  "chat.completion.chunk",
 			"created": created,
-			"model":   model,
+			"model":   responseModel,
 			"choices": []any{},
 			"usage":   usageMap(res.Usage),
 		})
@@ -580,6 +669,9 @@ func (s *Server) maxAttempts() int {
 }
 
 func (s *Server) mapModel(model string) string {
+	if mapped, ok := s.cfg.ModelMappings[strings.TrimSpace(model)]; ok {
+		return mapped
+	}
 	m := strings.ToLower(strings.TrimSpace(model))
 	m = strings.TrimPrefix(m, "quickwork/")
 	m = strings.TrimPrefix(m, "qw-")
@@ -600,6 +692,7 @@ func usageMap(u Usage) map[string]any {
 	if total == 0 {
 		total = u.PromptTokens + u.CacheReadTokens + u.CacheWriteTokens + completion
 	}
+	total = max(total, u.PromptTokens+u.CacheReadTokens+u.CacheWriteTokens+completion)
 	prompt := total - completion
 	if prompt < 0 {
 		prompt = u.PromptTokens + u.CacheReadTokens + u.CacheWriteTokens
@@ -609,8 +702,8 @@ func usageMap(u Usage) map[string]any {
 		"completion_tokens": completion,
 		"total_tokens":      total,
 	}
-	if u.CacheReadTokens > 0 {
-		m["prompt_tokens_details"] = map[string]any{"cached_tokens": u.CacheReadTokens}
+	if u.CacheReadTokens > 0 || u.CacheWriteTokens > 0 {
+		m["prompt_tokens_details"] = map[string]any{"cached_tokens": u.CacheReadTokens, "cache_creation_tokens": u.CacheWriteTokens}
 	}
 	return m
 }

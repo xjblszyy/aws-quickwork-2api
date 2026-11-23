@@ -153,6 +153,17 @@ CREATE TABLE IF NOT EXISTS accounts (
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_accounts_email_tenant ON accounts(email, tenant_url);
 CREATE INDEX IF NOT EXISTS idx_accounts_enabled ON accounts(disabled, id);
+CREATE TABLE IF NOT EXISTS request_records (
+	id TEXT PRIMARY KEY,
+	started_at INTEGER NOT NULL,
+	protocol TEXT NOT NULL,
+	model TEXT NOT NULL,
+	status INTEGER NOT NULL,
+	failed INTEGER NOT NULL,
+	data TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_request_records_time ON request_records(started_at DESC);
+CREATE INDEX IF NOT EXISTS idx_request_records_protocol ON request_records(protocol,started_at DESC);
 CREATE TABLE IF NOT EXISTS account_metrics (
 	account_id INTEGER PRIMARY KEY REFERENCES accounts(id) ON DELETE CASCADE,
 	call_count INTEGER NOT NULL DEFAULT 0,

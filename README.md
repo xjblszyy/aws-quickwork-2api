@@ -11,6 +11,8 @@ A single Go executable handles native OAuth / PKCE login, SQLite account storage
 ## Features
 
 - `POST /v1/chat/completions` with streaming SSE and non-streaming responses.
+- `POST /v1/responses` and `POST /v1/messages` with JSON / SSE and client tool-call round trips.
+- `POST /v1/responses/compact` for encrypted continuation summaries and explicitly estimated `/v1/messages/count_tokens` counts.
 - `GET /v1/models` listing configured local model aliases.
 - Native social and enterprise OAuth / PKCE login; manual callback submission works on remote servers without an accessible callback port.
 - SQLite accounts with round-robin selection, automatic token refresh, and classified retries before streaming begins, including single-account temporary-failure recovery.
@@ -24,6 +26,22 @@ A single Go executable handles native OAuth / PKCE login, SQLite account storage
 - Persistent per-account upstream attempt counts, cumulative attempt time, official token / USD / ACP credit reports, and manual or scheduled official monthly-minute quota sync.
 - Oversized user messages use upstream attachments with DLP checks when available, falling back to byte-budgeted middle truncation.
 - Optional `chat_agent_id` to select a custom QuickWork agent instead of the default agent's prompt and tool policy.
+
+## Client Access And Request History
+
+Use `http://127.0.0.1:8080/v1` as the OpenAI / Codex base URL, and `http://127.0.0.1:8080` as Claude Code's `ANTHROPIC_BASE_URL`. Replace the port or host for your deployment. For remote access, proxy only inference paths over HTTPS; do not expose management alongside them.
+
+Inference accepts Bearer and `x-api-key` authentication. Configure `api_keys` or the comma-separated `QUICKPROXY_API_KEYS` environment variable. Environment keys override file keys, are never saved back to the configuration, and an explicitly empty variable fails startup. Administrator passwords are separate.
+
+Configure `"model_mappings": {"opus5.5": "smart"}` in configuration or the WebUI and restart. Targets are `smart`, `fast`, `balanced`, or `auto`. Aliases appear in `/v1/models`; responses retain the requested model name. The Settings page includes client examples. Codex requires `wire_api="responses"` and `web_search="disabled"`; client function / custom tools and namespaces are supported, not hosted OpenAI search.
+
+All three protocols support real base64 PNG / JPEG / GIF attachments: up to 8 images, 5 MiB each, 20 MiB combined, and 8192 pixels per dimension. Upload and DLP approval are required. Remote image URL fetching is disabled to avoid SSRF. Unsupported formats, gateway image input, and upload failures produce errors, never silent text-only fallbacks.
+
+Responses compaction calls the upstream model for a summary and returns an opaque `compaction` item for subsequent `input`. With authentication enabled, the item is bound to the API key and survives server restarts; changing keys requires resending history. Without authentication, items last only for the current process. `previous_response_id`, background execution and server-side response storage are unsupported. Send full history or this service's compaction items instead.
+
+The **Usage records** navigation page lists individual client requests, including failures, with pagination and protocol / model / failure filters. Details include request ID, original / upstream model, status, timings, accounts and attempts, tool / image counts, context mode, and reported usage. No prompts, responses, image data, or complete keys are stored. History is management-only and bounded to 30 days / 10,000 records. Subagents and tools execute in the client, not in this server.
+
+Run `go test -race ./...` for local regression tests. Live tests consume upstream quota: explicitly set `RUN_LIVE_TESTS=1` and `QUICKPROXY_API_KEY`, then run `node scripts/smoke.mjs`. Optional `QUICKPROXY_BASE_URL` / `QUICKPROXY_TEST_MODEL` select a different deployment. No npm dependencies are needed.
 
 ## Requirements
 
@@ -376,7 +394,7 @@ Chat logs report request start, account attempts, upstream event counts, and fin
 
 ## Limitations
 
-- Chat completions only. Sampling fields such as `temperature`, `max_tokens`, `stop`, and `response_format` are not forwarded; `n > 1` returns HTTP 400.
+- Chat Completions, Responses and Messages implement conversation / tool compatibility, not every original provider endpoint. Sampling fields such as `temperature`, `max_tokens`, `stop`, and `response_format` are not forwarded; client output-token limits cannot be guaranteed. `n > 1` returns HTTP 400.
 - Each upstream `user_message` has a 64 KB JSON-byte limit. Reuse reduces history size. Oversized new user text first attempts attachment upload, DLP polling, and delivery through `files/upload/<thread>`. Only DLP `ALLOW` is accepted; `WARN` is unavailable. Caller instructions and tool definitions stay in WebSocket text rather than attachments.
 - Missing tenant URLs, gateway transport, upload failures, or rejected DLP checks fall back to truncating the middle while preserving the beginning and end within the byte budget. Only a minimal frame that still cannot fit produces `400 request_too_large`.
 - WebSocket fragmentation does not bypass the reassembled message limit. Multiple user messages are multiple turns; `mid_turn` steering and `message_split` output events cannot reassemble a single input turn.

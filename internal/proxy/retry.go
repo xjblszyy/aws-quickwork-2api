@@ -17,6 +17,19 @@ import (
 
 var ErrEmptyResponse = errors.New("upstream returned no visible text or tool calls")
 
+func publicChatError(code string) string {
+	switch code {
+	case "upstream_session_unavailable":
+		return "No usable upstream account is available; check account status in the management console"
+	case "context_length_exceeded":
+		return "The request cannot fit the upstream context; compact the conversation or shorten caller instructions"
+	case "upstream_timeout":
+		return "The upstream request timed out"
+	default:
+		return "The upstream request failed; check the request ID and account status in the management console"
+	}
+}
+
 type UpstreamError struct {
 	StatusCode int
 	Code       string
@@ -142,7 +155,7 @@ func invalidChatRequest(err error) bool {
 func chatErrorStatus(err error) (int, string) {
 	switch {
 	case errors.Is(err, accounts.ErrNoAccounts), errors.Is(err, accounts.ErrNoAvailableAccounts):
-		return http.StatusUnauthorized, "upstream_session_unavailable"
+		return http.StatusServiceUnavailable, "upstream_session_unavailable"
 	case errors.Is(err, ErrUserMessageTooLarge):
 		return http.StatusRequestEntityTooLarge, "context_length_exceeded"
 	case invalidChatRequest(err):

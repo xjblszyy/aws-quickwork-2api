@@ -20,6 +20,7 @@ type conversation struct {
 	messages     []Message
 	systemPrompt string
 	lastUsed     atomic.Int64
+	users        atomic.Int64
 }
 
 func (c *conversation) touch() {
@@ -83,14 +84,17 @@ func newConversationStore(ttl time.Duration, max int) *conversationStore {
 func (s *conversationStore) acquire(key string) *conversation {
 	s.mu.Lock()
 	for k, c := range s.entries {
-		if c.idle() > s.ttl {
+		if c.users.Load() == 0 && c.idle() > s.ttl {
 			delete(s.entries, k)
 		}
 	}
-	if len(s.entries) >= s.max {
+	if s.entries[key] == nil && len(s.entries) >= s.max {
 		var oldestKey string
 		var oldest time.Time
 		for k, c := range s.entries {
+			if c.users.Load() > 0 {
+				continue
+			}
 			used := time.Unix(0, c.lastUsed.Load())
 			if oldestKey == "" || used.Before(oldest) {
 				oldestKey, oldest = k, used
@@ -103,8 +107,11 @@ func (s *conversationStore) acquire(key string) *conversation {
 	c := s.entries[key]
 	if c == nil {
 		c = &conversation{}
-		s.entries[key] = c
+		if len(s.entries) < s.max {
+			s.entries[key] = c
+		}
 	}
+	c.users.Add(1)
 	s.mu.Unlock()
 
 	c.mu.Lock()
@@ -115,6 +122,7 @@ func (s *conversationStore) acquire(key string) *conversation {
 func (s *conversationStore) release(c *conversation) {
 	c.touch()
 	c.mu.Unlock()
+	c.users.Add(-1)
 }
 
 // conversationKey identifies one OpenAI conversation. A client-provided
@@ -122,16 +130,19 @@ func (s *conversationStore) release(c *conversation) {
 // (including tool definitions) plus the first user message is used so the key
 // stays stable while the transcript grows.
 func conversationKey(r *http.Request, req *ChatRequest, fullSystemPrompt string) string {
+	h := sha256.New()
+	h.Write([]byte(tokenFromRequest(r)))
+	h.Write([]byte{0})
+	h.Write([]byte(req.Model))
+	h.Write([]byte{0})
+	h.Write([]byte(r.URL.Path))
+	h.Write([]byte{0})
 	for _, header := range []string{"X-Conversation-Id", "X-Thread-Id"} {
 		if id := strings.TrimSpace(r.Header.Get(header)); id != "" {
-			return "h:" + id
+			h.Write([]byte(header + ":" + id))
+			return "h:" + hex.EncodeToString(h.Sum(nil))
 		}
 	}
-	h := sha256.New()
-	h.Write([]byte(r.Header.Get("Authorization")))
-	h.Write([]byte{0})
-	h.Write([]byte(r.Header.Get("X-Api-Key")))
-	h.Write([]byte{0})
 	h.Write([]byte(fullSystemPrompt))
 	for _, m := range req.Messages {
 		role := strings.ToLower(strings.TrimSpace(m.Role))

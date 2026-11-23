@@ -62,34 +62,37 @@ type Usage struct {
 
 // Config is the server configuration stored in config.json.
 type Config struct {
-	Addr             string   `json:"addr"`
-	Database         string   `json:"database"`
-	APIKeys          []string `json:"api_keys"`
-	Models           []string `json:"models"`
-	DefaultModel     string   `json:"default_model"`
-	RequestTimeout   Duration `json:"request_timeout"`
-	RefreshBefore    Duration `json:"refresh_before"`
-	MaxAttempts      int      `json:"max_attempts"`
-	AppVersion       string   `json:"app_version"`
-	Surface          string   `json:"surface"`
-	OutpostID        string   `json:"outpost_id"`
-	WorkingSessionID string   `json:"working_session_id"`
-	Timezone         string   `json:"timezone"`
-	Locale           string   `json:"locale"`
-	ThinkingEffort   string   `json:"thinking_effort"`
-	ChatAgentID      string   `json:"chat_agent_id"`
-	KeepSessions     bool     `json:"keep_sessions"`
-	SessionReuse     bool     `json:"session_reuse"`
-	SessionTTL       Duration `json:"session_ttl"`
-	OAuth            OAuth    `json:"oauth"`
-	WebUI            WebUI    `json:"webui"`
-	Usage            Usage    `json:"usage"`
+	Addr             string            `json:"addr"`
+	Database         string            `json:"database"`
+	APIKeys          []string          `json:"api_keys"`
+	Models           []string          `json:"models"`
+	ModelMappings    map[string]string `json:"model_mappings"`
+	DefaultModel     string            `json:"default_model"`
+	RequestTimeout   Duration          `json:"request_timeout"`
+	RefreshBefore    Duration          `json:"refresh_before"`
+	MaxAttempts      int               `json:"max_attempts"`
+	AppVersion       string            `json:"app_version"`
+	Surface          string            `json:"surface"`
+	OutpostID        string            `json:"outpost_id"`
+	WorkingSessionID string            `json:"working_session_id"`
+	Timezone         string            `json:"timezone"`
+	Locale           string            `json:"locale"`
+	ThinkingEffort   string            `json:"thinking_effort"`
+	ChatAgentID      string            `json:"chat_agent_id"`
+	KeepSessions     bool              `json:"keep_sessions"`
+	SessionReuse     bool              `json:"session_reuse"`
+	SessionTTL       Duration          `json:"session_ttl"`
+	OAuth            OAuth             `json:"oauth"`
+	WebUI            WebUI             `json:"webui"`
+	Usage            Usage             `json:"usage"`
 
 	// Path is the absolute config file path; not serialized.
 	Path string `json:"-"`
 
 	originalDatabase string
 	resolvedDatabase string
+	fileAPIKeys      []string
+	apiKeysFromEnv   bool
 }
 
 // Default returns the built-in configuration.
@@ -99,6 +102,7 @@ func Default() Config {
 		Database:       "data/quickwork.db",
 		APIKeys:        []string{},
 		Models:         []string{"smart", "fast", "balanced", "auto"},
+		ModelMappings:  map[string]string{},
 		DefaultModel:   "smart",
 		RequestTimeout: Duration(5 * time.Minute),
 		RefreshBefore:  Duration(10 * time.Minute),
@@ -156,6 +160,20 @@ func Load(configPath string) (*Config, error) {
 	}
 	cfg.Path = abs
 	applyDefaults(&cfg)
+	if raw, ok := os.LookupEnv("QUICKPROXY_API_KEYS"); ok {
+		cfg.fileAPIKeys = append([]string(nil), cfg.APIKeys...)
+		cfg.apiKeysFromEnv = true
+		cfg.APIKeys = nil
+		for _, key := range strings.Split(raw, ",") {
+			key = strings.TrimSpace(key)
+			if key != "" {
+				cfg.APIKeys = append(cfg.APIKeys, key)
+			}
+		}
+		if len(cfg.APIKeys) == 0 {
+			return nil, fmt.Errorf("QUICKPROXY_API_KEYS is set but contains no keys")
+		}
+	}
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("%s: %w", abs, err)
 	}
@@ -169,11 +187,16 @@ func Load(configPath string) (*Config, error) {
 
 func (c *Config) FileValues() Config {
 	value := *c
+	if c.apiKeysFromEnv {
+		value.APIKeys = append([]string(nil), c.fileAPIKeys...)
+	}
 	if c.originalDatabase != "" && c.Database == c.resolvedDatabase {
 		value.Database = c.originalDatabase
 	}
 	return value
 }
+
+func (c *Config) APIKeysFromEnv() bool { return c.apiKeysFromEnv }
 
 func write(path string, cfg *Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -276,6 +299,32 @@ func applyDefaults(c *Config) {
 }
 
 func (c *Config) Validate() error {
+	if len(c.APIKeys) > 256 {
+		return fmt.Errorf("at most 256 API keys are allowed")
+	}
+	for _, key := range c.APIKeys {
+		if len(key) < 1 || len(key) > 1024 {
+			return fmt.Errorf("API keys must contain 1-1024 printable ASCII characters")
+		}
+		for _, ch := range key {
+			if ch < 33 || ch > 126 {
+				return fmt.Errorf("API keys must contain printable ASCII characters without whitespace")
+			}
+		}
+	}
+	for alias, target := range c.ModelMappings {
+		if alias == "" || alias != strings.TrimSpace(alias) || len(alias) > 128 || strings.ContainsAny(alias, "\r\n\t") {
+			return fmt.Errorf("model_mappings aliases must contain 1-128 characters without surrounding whitespace")
+		}
+		switch target {
+		case "smart", "fast", "balanced", "auto":
+		default:
+			return fmt.Errorf("model_mappings targets must be smart, fast, balanced or auto")
+		}
+		if (alias == "smart" || alias == "fast" || alias == "balanced" || alias == "auto") && alias != target {
+			return fmt.Errorf("model_mappings must not override native model names")
+		}
+	}
 	if c.RequestTimeout <= 0 {
 		return fmt.Errorf("request_timeout must be positive")
 	}

@@ -2,6 +2,9 @@
   "addr": "127.0.0.1:8080",
   "database": "data/quickwork.db",
   "api_keys": [],
+  "model_mappings": {
+    "opus5.5": "smart"
+  },
   "models": [
     "smart",
     "fast",

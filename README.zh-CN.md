@@ -11,6 +11,8 @@
 ## 功能
 
 - `POST /v1/chat/completions`，支持流式（SSE）与非流式响应
+- `POST /v1/responses` 与 `POST /v1/messages`，支持流式、非流式、客户端工具调用及结果回传
+- `POST /v1/responses/compact` 生成可回传的加密对话摘要；`POST /v1/messages/count_tokens` 提供明确标记的估算计数
 - `GET /v1/models`，返回本地模型别名
 - 原生 social 登录（AWS IAM Identity Center OIDC）与企业 OIDC 登录，使用 PKCE
 - 支持服务器/远程登录：手动粘贴浏览器 callback URL，无需开放本地回调端口
@@ -32,6 +34,28 @@
 - `system` / `developer` 消息与工具定义放在本轮 user 文本开头的 `[System instructions from the API caller]` 区块内；上游会忽略每轮 `system_prompt` 字段，并把 `custom_prompt` 当作低信任的个人偏好，user 轮次是唯一可靠送达调用方指令的通道
 - 64 KB 单帧预算按实际 JSON 字节计算：用户内容过大时优先走 out-of-band 附件（`upload-attachment` → DLP 扫描 → `files/upload`），WebSocket 只发送短引用与 `attachments` 元数据；附件只包含用户内容，调用方指令仍留在 WS 文本里。附件不可用时才裁剪、保留开头与结尾，避免直接返回 `request_too_large`
 - `chat_agent_id` 可指定一个 QuickWork 自定义 agent，以替代默认内置 agent 的提示词与工具策略
+
+## 客户端接入与使用记录
+
+OpenAI SDK / Codex 的 Base URL 使用 `http://127.0.0.1:8080/v1`；Claude Code 的 `ANTHROPIC_BASE_URL` 使用 `http://127.0.0.1:8080`，不带 `/v1`。替换为实际监听端口或反向代理地址。远程部署应仅代理推理路径并使用 HTTPS，不要一并公开管理后台。
+
+推理密钥支持 `Authorization: Bearer <key>` 和 `x-api-key: <key>`。可配置 `api_keys`，也可通过 `QUICKPROXY_API_KEYS` 环境变量提供逗号分隔的密钥列表；环境变量优先，且不会通过保存配置写回文件。显式设置空环境变量会拒绝启动，避免误关闭鉴权。管理密码不能替代推理密钥。
+
+在 WebUI「配置」中设置模型映射，或配置：
+
+```json
+"model_mappings": { "opus5.5": "smart" }
+```
+
+映射目标为 `smart`、`fast`、`balanced` 或 `auto`。`/v1/models` 列出别名，响应保留客户端请求的模型名；保存配置后重启生效。「配置」页提供 Codex、Claude Code 和 SDK 的接入示例。Codex 需要设置 `wire_api="responses"`、`web_search="disabled"`；支持 function / custom 客户端工具及命名空间，不支持 OpenAI 托管搜索。
+
+图片支持三种协议中的 base64 PNG、JPEG、GIF，实际上传到上游附件服务并等待 DLP 放行；每次最多 8 张、每张 5 MiB、合计 20 MiB，宽高不超过 8192。为避免 SSRF，不抓取远程图片 URL。不支持的格式、gateway 图片或上传失败会报错，不会静默变成纯文本。
+
+Responses 的压缩接口调用上游生成摘要，再返回绑定当前 API Key 的 `compaction` 项，可放入后续 `input`。启用鉴权时可跨进程重启恢复；更换 API Key 后须重发完整历史。未启用鉴权时压缩项仅在当前进程有效。`previous_response_id`、后台执行和服务端响应存储不受支持，客户端应发送完整历史或本服务生成的压缩项。采样与输出上限仍受下方限制约束。
+
+左侧「使用记录」展示每条客户端推理请求，包括失败请求，支持协议、模型、失败状态筛选及分页。详情包含请求 ID、原始/上游模型、状态、耗时、账号、每次尝试、工具数量、图片数量、上下文处理方式、官方上报 Token 和费用。不保存请求/响应正文、图片内容或完整密钥；记录最多保留 30 天、10,000 条，只有管理会话可以读取。客户端子 agent 由 Codex / Claude Code 编排，代理隔离各客户端会话，不执行客户端工具。
+
+回归测试：`go test -race ./...`。真实上游测试会使用账号额度，需显式设置 `RUN_LIVE_TESTS=1` 和 `QUICKPROXY_API_KEY` 后运行 `node scripts/smoke.mjs`；可用 `QUICKPROXY_BASE_URL`、`QUICKPROXY_TEST_MODEL` 覆盖测试目标。脚本不需要安装 npm 依赖。
 
 ## 环境要求
 
@@ -292,7 +316,8 @@ WebUI 默认启用，与 OpenAI 兼容 API 共用监听地址。配置 `webui.en
 | `addr` | `127.0.0.1:8080` | HTTP 监听地址 |
 | `database` | `data/quickwork.db` | SQLite 文件；相对路径基于 `config.json` 所在目录 |
 | `api_keys` | `[]` | 允许的本地 API key；为空时关闭鉴权 |
-| `models` | `smart,fast,balanced,auto` | `/v1/models` 返回值与 model 白名单 |
+| `models` | `smart,fast,balanced,auto` | `/v1/models` 的基础列表；额外别名由 `model_mappings` 提供 |
+| `model_mappings` | `{}` | 客户端模型名到 smart / fast / balanced / auto 的映射 |
 | `default_model` | `smart` | 未知 model 的映射 |
 | `request_timeout` | `5m` | 单次上游请求超时 |
 | `refresh_before` | `10m` | token 距离到期小于该值时自动 refresh |
@@ -457,9 +482,9 @@ chat chatcmpl-... done status=ok account=1:social:user@example.com model=smart a
 
 ## 限制
 
-- 只实现聊天补全。`temperature`、`max_tokens`、`stop`、`response_format` 等采样参数不会传给上游；`n > 1` 会返回 400。
+- 实现 Chat Completions、Responses 和 Messages 的对话/工具兼容层，不是所有原厂接口的完整实现。`temperature`、`max_tokens`、`stop`、`response_format` 等采样参数不会传给上游；不能保证客户端指定的输出 Token 上限，`n > 1` 会返回 400。
 - 上游 `user_message` 帧上限 64 KB。会话复用开启时通常只送新增消息；若单个 delta 仍超限，代理会先把该轮用户内容上传为上游附件（`POST /integration/quick-work/upload-attachment`、轮询 `attachment-dlp-status`、再以 `qbs-event` 投递到 `files/upload/<thread>`），WS 只送短引用和 `attachments` 元数据；附件必须在 DLP 返回 `ALLOW` 后才能使用，`WARN` 视为不可用。附件只放用户内容，调用方指令与工具定义留在 WS 文本中，避免模型把附件里的指令当成注入。附件路径失败、账号没有 `tenant_url`、gateway transport 或被 DLP 拒绝时，代理回退到裁剪：按实际 JSON 字节保留开头与结尾、裁剪中间内容，并记录 `user_message trimmed ...`；只有连最小帧都无法放入时才返回 `400 request_too_large`。
-- WebSocket 分片只影响传输层，上游重組後仍按單一 `user_message` 檢查 64 KB。多個 `user_message` 會被視為多輪；`mid_turn` 是 steering，`message_split` 是服務端輸出事件，不能用來拼接同一輪輸入。
+- WebSocket 分片只影响传输层，上游重组后仍按单一 `user_message` 检查 64 KB。多个 `user_message` 会被视为多轮；`mid_turn` 是 steering，`message_split` 是服务端输出事件，不能用来拼接同一轮输入。
 - 工具桥接使用文本协议，模型偶尔可能不遵守；有工具时流式响应会缓冲到本轮结束。代理只解析并返回 `tool_calls`，不执行工具。
 - 默认内置 agent 仍会在服务端附加约 60K token 的提示词和内置工具。调用方指令通过 user 轮次影响任务行为，但不能删除服务端上下文或改掉产品身份；需要彻底隔离时使用 `chat_agent_id` 指向自定义 agent。
 - 上游会忽略 `user_message.payload.system_prompt`，并把 `custom_prompt` 视为低信任偏好；代理因此不再使用这两个字段。caller 指令跟随 user 文本发送，已在 social 路径用真实账号验证；enterprise / gateway 仍待验证。

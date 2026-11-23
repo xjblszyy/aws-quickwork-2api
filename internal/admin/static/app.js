@@ -1,6 +1,28 @@
 "use strict";
 
 const translations = {
+  requestRecords: ["Usage records", "使用记录"],
+  envKeyNotice: ["API keys are managed by QUICKPROXY_API_KEYS. Update the service environment to rotate them.", "API Key 由 QUICKPROXY_API_KEYS 环境变量管理；更换密钥请更新服务启动环境，不会将密钥写入项目配置文件。"],
+  clientExamples: ["Client configuration examples and compatibility notes", "客户端配置示例与兼容说明"],
+  compatibilityNotes: ["Images: base64 PNG/JPEG/GIF only, up to 8 images and 5 MiB each. Remote URL fetching is disabled. Compaction items require the same API key and survive restarts when authentication is enabled. Token counting is estimated. Native hosted web search and previous_response_id are not supported.", "图片支持 base64 PNG/JPEG/GIF，每次最多 8 张、每张 5 MiB、合计 20 MiB；不代抓远程图片 URL。压缩项绑定同一 API Key，启用鉴权时可跨服务重启使用。Token 计数为估算；不支持原生托管搜索或 previous_response_id。"],
+  clientAccess: ["Client access", "客户端接入"],
+  accessHint: ["Use a separate inference API key. Never share your administrator password. Use HTTPS and a restricted reverse proxy for remote access.", "使用独立的推理 API Key，不要分享管理密码。远程接入请配置 HTTPS 和受限反向代理。"],
+  modelMappings: ["Model mappings (JSON)", "模型映射（JSON）"],
+  mappingHint: ["Map client model names to smart, fast, balanced or auto. Saved changes require a restart.", "将客户端模型名映射为 smart、fast、balanced 或 auto；保存后需重启服务。"],
+  generateKey: ["Generate a replacement API key", "生成替换 API Key"],
+  generateKeyHint: ["Copy the generated key before saving. Saving replaces existing keys; keys cannot be retrieved later.", "保存前复制生成的密钥。保存会替换已有密钥，之后无法再次查看。"],
+  protocol: ["Protocol", "协议"],
+  recordsHint: ["One record per client request, including failures. No prompts, responses, images or API keys are stored. Retained for 30 days, up to 10,000 records.", "每条客户端请求记录一次，包含失败请求；不保存对话正文、图片或密钥。最多保留 30 天、10,000 条。"],
+  allProtocols: ["All protocols", "全部协议"],
+  failedOnly: ["Failures only", "仅失败请求"],
+  requestTime: ["Time / ID", "时间 / 请求 ID"],
+  modelRoute: ["Requested → upstream", "请求模型 → 上游模型"],
+  requestDuration: ["Duration / attempts", "耗时 / 尝试次数"],
+  noRecords: ["No request records yet.", "暂无使用记录。"],
+  previousPage: ["Previous", "上一页"],
+  nextPage: ["Next", "下一页"],
+  recordDetail: ["Request details", "请求详情"],
+  closeDetail: ["Close", "关闭"],
   title: ["QuickWork Console", "QuickWork 控制台"],
   language: ["Language", "语言"],
   skipContent: ["Skip to content", "跳至主要内容"],
@@ -364,7 +386,7 @@ const state = {
   loginRevision: 0,
   playgroundController: null
 };
-const pageTitles = { overview: "overview", accounts: "accounts", config: "settings", playground: "playground" };
+const pageTitles = { overview: "overview", accounts: "accounts", records: "requestRecords", config: "settings", playground: "playground" };
 const initialDark = window.matchMedia && window.matchMedia("(prefers-color-scheme: dark)").matches;
 
 function setTheme(dark) {
@@ -409,6 +431,10 @@ function clearSession() {
   state.config = null;
   state.accounts = [];
   state.login = null;
+  elements["records-body"].replaceChildren();
+  elements["record-detail"].textContent = "";
+  elements["record-detail-panel"].hidden = true;
+  elements["model-mappings"].value = "";
   elements["login-password"].value = "";
   elements["playground-api-key"].value = "";
   elements["playground-prompt"].value = "";
@@ -530,6 +556,7 @@ function enterApp(session) {
 function openPage(page) {
   if (!Object.hasOwn(pageTitles, page)) return;
   state.page = page;
+  if (page === "records") loadRecords().catch(reportError);
   for (const name of Object.keys(pageTitles)) elements[`page-${name}`].hidden = name !== page;
   for (const button of document.querySelectorAll("[data-page]")) {
     button.classList.toggle("active", button.dataset.page === page);
@@ -731,10 +758,17 @@ function renderQuota(quota) {
 function renderConfig(data) {
   state.config = data;
   elements["config-json"].value = JSON.stringify(data.settings || {}, null, 2);
+  elements["model-mappings"].value = JSON.stringify(data.settings?.model_mappings || {}, null, 2);
+  elements["openai-base-url"].value = `${location.origin}/v1`;
+  elements["anthropic-base-url"].value = location.origin;
+  elements["client-config-examples"].textContent = `# Codex config.toml\nmodel = "opus5.5"\nmodel_provider = "quickwork"\nweb_search = "disabled"\n\n[model_providers.quickwork]\nname = "AWS Quick"\nbase_url = "${location.origin}/v1"\nenv_key = "QUICKPROXY_API_KEY"\nwire_api = "responses"\n\n# Claude Code environment\nANTHROPIC_BASE_URL=${location.origin}\nANTHROPIC_API_KEY=<your inference API key>\n# Use --model opus5.5\n\n# OpenAI SDK\nbase_url="${location.origin}/v1"\napi_key=<your inference API key>`;
   renderConfigMetadata(data);
 }
 
 function renderConfigMetadata(data) {
+  const envKeys = Boolean(data.overrides?.api_keys);
+  elements["api-key-env-notice"].hidden = !envKeys;
+  for (const id of ["replacement-api-keys", "generate-api-key", "clear-api-keys"]) elements[id].disabled = envKeys;
   setTranslation(elements["api-key-count"], "keyCount", { count: data.api_keys_count || 0 });
   elements["config-override"].hidden = !data.overrides?.addr;
   elements["restart-notice"].hidden = !data.restart_required;
@@ -863,6 +897,7 @@ elements["refresh-page"].addEventListener("click", async () => {
   try {
     if (state.page === "accounts") await Promise.all([loadAccounts(), loadStatus()]);
     else if (state.page === "config") await loadConfig();
+    else if (state.page === "records") await loadRecords();
     else await loadStatus();
     showMessage("pageUpdated", "success");
   } catch (error) {
@@ -1049,7 +1084,7 @@ elements["reload-config"].addEventListener("click", async () => {
     await loadConfig();
     elements["replacement-api-keys"].value = "";
     elements["clear-api-keys"].checked = false;
-    elements["replacement-api-keys"].disabled = false;
+    elements["replacement-api-keys"].disabled = Boolean(state.config?.overrides?.api_keys);
     showMessage("settingsReloaded", "success");
   } catch (error) {
     reportError(error);
@@ -1071,6 +1106,8 @@ elements["config-form"].addEventListener("submit", async event => {
   try {
     settings = JSON.parse(elements["config-json"].value);
     if (settings === null || typeof settings !== "object" || Array.isArray(settings)) throw new Error(translate("jsonObjectRequired"));
+    settings.model_mappings = JSON.parse(elements["model-mappings"].value || "{}");
+    if (!settings.model_mappings || Array.isArray(settings.model_mappings) || typeof settings.model_mappings !== "object") throw new Error("Invalid mappings");
   } catch {
     showMessage("invalidSettings", "error");
     elements["config-json"].focus();
@@ -1091,7 +1128,7 @@ elements["config-form"].addEventListener("submit", async event => {
     if (!state.authenticated || generation !== state.generation) return;
     renderConfig(data);
     elements["clear-api-keys"].checked = false;
-    elements["replacement-api-keys"].disabled = false;
+    elements["replacement-api-keys"].disabled = Boolean(data.overrides?.api_keys);
     showMessage("settingsSaved", "success");
   } catch (error) {
     reportError(error);
@@ -1116,15 +1153,20 @@ elements["playground-form"].addEventListener("submit", async event => {
   const apiKey = elements["playground-api-key"].value.trim();
   if (apiKey) headers.Authorization = `Bearer ${apiKey}`;
   try {
-    const data = await requestJSON("/v1/chat/completions", {
+    const protocol = elements["playground-protocol"].value;
+    const model = elements["playground-model"].value;
+    const path = protocol === "responses" ? "/v1/responses" : protocol === "messages" ? "/v1/messages" : "/v1/chat/completions";
+    const body = protocol === "responses" ? { model, input: prompt } : { model, messages: [{ role: "user", content: prompt }], stream: false, max_tokens: 1024 };
+    if (protocol === "messages") headers["anthropic-version"] = "2023-06-01";
+    const data = await requestJSON(path, {
       method: "POST",
       management: false,
       controller,
       headers,
-      body: { model: elements["playground-model"].value, messages: [{ role: "user", content: prompt }], stream: false }
+      body
     });
     if (!state.authenticated || generation !== state.generation) return;
-    const content = data.choices?.[0]?.message?.content;
+    const content = protocol === "responses" ? data.output?.flatMap(item => item.content || []).filter(item => item.type === "output_text").map(item => item.text).join("") : protocol === "messages" ? data.content?.filter(item => item.type === "text").map(item => item.text).join("") : data.choices?.[0]?.message?.content;
     if (typeof content === "string") setRawText(elements["playground-output"], content);
     else setTranslation(elements["playground-output"], "noResponseText");
     setTranslation(elements["playground-state"], "requestComplete");
@@ -1145,6 +1187,48 @@ elements["cancel-playground"].addEventListener("click", () => state.playgroundCo
 elements["clear-playground"].addEventListener("click", () => {
   setRawText(elements["playground-output"], "");
   if (!state.playgroundController) setTranslation(elements["playground-state"], "noRequest");
+});
+
+let recordsOffset = 0;
+let recordsRevision = 0;
+async function loadRecords() {
+  const generation = state.generation;
+  const revision = ++recordsRevision;
+  const query = new URLSearchParams({ limit: "50", offset: String(recordsOffset), protocol: elements["records-protocol"].value, model: elements["records-model"].value.trim(), failed: String(elements["records-failed"].checked) });
+  const data = await requestJSON(`/api/requests?${query}`);
+  if (!state.authenticated || generation !== state.generation || revision !== recordsRevision) return;
+  elements["records-body"].replaceChildren();
+  for (const row of data.data) {
+    const tr = document.createElement("tr");
+    for (const value of [`${new Date(row.started_at).toLocaleString()}\n${row.id}`, row.protocol, `${row.model || "—"} → ${row.upstream_model || "—"}`, `${row.status}${row.error_code ? ` / ${row.error_code}` : ""}`, `${row.duration_ms} ms / ${row.attempts}`, `${row.prompt_tokens} + ${row.completion_tokens} (${row.total_tokens})`, row.account_id || "—"]) {
+      const td = document.createElement("td"); td.textContent = String(value); tr.append(td);
+    }
+    const cell = document.createElement("td");
+    const button = document.createElement("button"); button.type = "button"; button.className = "button small"; setTranslation(button, "recordDetail");
+    button.addEventListener("click", async () => {
+      try { const detail = await requestJSON(`/api/requests/${encodeURIComponent(row.id)}`); if (generation !== state.generation || !state.authenticated) return; elements["record-detail"].textContent = JSON.stringify(detail, null, 2); elements["record-detail-panel"].hidden = false; elements["record-detail-panel"].scrollIntoView({ block: "nearest" }); } catch (error) { reportError(error); }
+    });
+    cell.append(button); tr.append(cell); elements["records-body"].append(tr);
+  }
+  elements["records-empty"].hidden = data.data.length > 0;
+  elements["records-prev"].disabled = recordsOffset === 0;
+  elements["records-next"].disabled = recordsOffset + data.data.length >= data.total;
+  elements["records-pagination"].textContent = `${data.total ? recordsOffset + 1 : 0}–${recordsOffset + data.data.length} / ${data.total}`;
+}
+elements["records-filter"].addEventListener("submit", event => { event.preventDefault(); recordsOffset = 0; loadRecords().catch(reportError); });
+elements["records-prev"].addEventListener("click", () => { recordsOffset = Math.max(0, recordsOffset - 50); loadRecords().catch(reportError); });
+elements["records-next"].addEventListener("click", () => { recordsOffset += 50; loadRecords().catch(reportError); });
+elements["record-detail-close"].addEventListener("click", () => { elements["record-detail-panel"].hidden = true; });
+elements["generate-api-key"].addEventListener("click", () => {
+  const bytes = crypto.getRandomValues(new Uint8Array(32));
+  elements["replacement-api-keys"].value = "sk-qw-" + Array.from(bytes, byte => byte.toString(16).padStart(2, "0")).join("");
+  elements["clear-api-keys"].checked = false; elements["replacement-api-keys"].disabled = false; elements["replacement-api-keys"].focus();
+});
+elements["model-mappings"].addEventListener("input", () => {
+  try { const settings = JSON.parse(elements["config-json"].value); settings.model_mappings = JSON.parse(elements["model-mappings"].value); elements["config-json"].value = JSON.stringify(settings, null, 2); } catch { /* Keep incomplete edits until the user finishes typing. */ }
+});
+elements["config-json"].addEventListener("input", () => {
+  try { const settings = JSON.parse(elements["config-json"].value); elements["model-mappings"].value = JSON.stringify(settings.model_mappings || {}, null, 2); } catch { /* Keep incomplete JSON editable. */ }
 });
 
 const savedTheme = readPreference("theme");

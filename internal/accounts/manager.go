@@ -263,6 +263,10 @@ type CallUsage struct {
 	Success          bool
 }
 
+func (m *Manager) RecordRequest(ctx context.Context, row store.RequestRecord) error {
+	return m.store.RecordRequest(ctx, row)
+}
+
 func (m *Manager) RecordCall(ctx context.Context, id int64, usage CallUsage) {
 	recordCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 3*time.Second)
 	defer cancel()

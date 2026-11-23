@@ -89,6 +89,10 @@ func shouldAttachPrompt(promptSize int) bool {
 // uploadPromptAttachment performs the three-step out-of-band upload. It
 // returns the server-side path and attachment id that go on the user_message.
 func uploadPromptAttachment(ctx context.Context, sess *Session, threadID, name string, data []byte) (attachmentRef, error) {
+	return uploadAttachment(ctx, sess, threadID, name, attachmentMimeType, data)
+}
+
+func uploadAttachment(ctx context.Context, sess *Session, threadID, name, mimeType string, data []byte) (attachmentRef, error) {
 	ref := attachmentRef{Name: name, Size: len(data)}
 	if sess == nil {
 		return ref, attachErr("attachment upload: no session")
@@ -109,7 +113,7 @@ func uploadPromptAttachment(ctx context.Context, sess *Session, threadID, name s
 	// the DLP scan.
 	q := url.Values{}
 	q.Set("name", name)
-	q.Set("contentType", attachmentMimeType)
+	q.Set("contentType", mimeType)
 	q.Set("contentLength", strconv.Itoa(len(data)))
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		base+"/integration/quick-work/upload-attachment?"+q.Encode(), bytes.NewReader(data))
