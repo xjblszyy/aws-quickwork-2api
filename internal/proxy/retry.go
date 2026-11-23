@@ -144,7 +144,7 @@ func chatErrorStatus(err error) (int, string) {
 	case errors.Is(err, accounts.ErrNoAccounts), errors.Is(err, accounts.ErrNoAvailableAccounts):
 		return http.StatusUnauthorized, "upstream_session_unavailable"
 	case errors.Is(err, ErrUserMessageTooLarge):
-		return http.StatusBadRequest, "request_too_large"
+		return http.StatusRequestEntityTooLarge, "context_length_exceeded"
 	case invalidChatRequest(err):
 		return http.StatusBadRequest, "invalid_request_error"
 	case errors.Is(err, context.DeadlineExceeded):

@@ -132,10 +132,12 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 
 	resume := false
 	promptText := prompt
+	promptMessages := req.Messages
 	if s.cfg.SessionReuse && conv.systemPrompt == systemPromptText {
 		if delta, ok := conv.delta(req.Messages); ok {
 			if deltaPrompt, err := formatPrompt(delta); err == nil && hasVisibleText(deltaPrompt) {
 				promptText = deltaPrompt
+				promptMessages = delta
 				resume = true
 			}
 		}
@@ -149,6 +151,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 	created := time.Now().Unix()
 	in := ChatInput{
 		Prompt:        promptText,
+		Messages:      promptMessages,
 		Model:         model,
 		ThreadID:      threadID,
 		Title:         titleFor(lastUserText(req.Messages)),
@@ -179,6 +182,7 @@ func (s *Server) handleChat(w http.ResponseWriter, r *http.Request) {
 		in.ThreadID = ""
 		in.CreateSession = true
 		in.Prompt = prompt
+		in.Messages = req.Messages
 	}
 	responseOutput := func(result ChatResult) (string, []ToolCall) {
 		text := result.Text

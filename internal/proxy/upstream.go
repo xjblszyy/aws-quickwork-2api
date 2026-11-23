@@ -13,7 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-	"unicode/utf8"
 
 	"github.com/gorilla/websocket"
 
@@ -41,6 +40,7 @@ func NewUpstream(cfg *config.Config) *Upstream {
 
 // ChatInput is one upstream turn.
 type ChatInput struct {
+	Messages      []Message
 	Prompt        string
 	Model         string
 	ThreadID      string
@@ -276,7 +276,7 @@ func (u *Upstream) Chat(ctx context.Context, sess *Session, in ChatInput, onEven
 		}
 	}
 
-	if err := fitUserMessage(payload); err != nil {
+	if err := fitUserMessage(payload, in); err != nil {
 		return ChatResult{}, err
 	}
 	if err := send(map[string]any{"type": "user_message", "payload": payload}); err != nil {
@@ -899,105 +899,27 @@ func truncateText(s string, max int) string {
 	return s[:max] + "…"
 }
 
-// fitUserMessage keeps the user_message payload under the upstream limit.
-// Upstream checks the reassembled user_message JSON, so WebSocket
-// fragmentation or multiple user_message frames cannot carry one oversized
-// turn: extra frames would become separate turns. Trim within the single frame
-// instead. The middle of the prompt text is removed, preserving its beginning
-// and its end (where the tool interface and the user request sit). Trimming is
-// byte-based because the upstream limit is bytes, not runes.
-func fitUserMessage(payload map[string]any) error {
-	wrap := func() ([]byte, error) {
-		return json.Marshal(map[string]any{"type": "user_message", "payload": payload})
+// An uploaded attachment already contains the full transcript. Preserve its
+// reference and the caller instructions when checking the inline frame.
+func fitUserMessage(payload map[string]any, in ChatInput) error {
+	n, err := userMessageBytes(payload)
+	if err != nil || n <= maxUserMessageBytes {
+		return err
 	}
-	body, err := wrap()
+	if payload["attachments"] != nil {
+		return ErrUserMessageTooLarge
+	}
+	payload["text"] = relayPrompt(in.SystemPrompt, "")
+	fixed, err := userMessageBytes(payload)
 	if err != nil {
 		return err
 	}
-	if len(body) <= maxUserMessageBytes {
-		return nil
+	prompt, err := fitPrompt(in, maxUserMessageBytes-fixed)
+	if err != nil {
+		return err
 	}
-	original := len(body)
-	text, _ := payload["text"].(string)
-
-	// 1. The prompt text is the normal overflow source; trim its middle first.
-	if len(text) > 4096 {
-		payload["text"] = shrinkToLimit(text, func(s string) ([]byte, error) {
-			payload["text"] = s
-			return wrap()
-		}, textTrimMarker)
-		if body, err = wrap(); err != nil {
-			return err
-		}
-	}
-
-	// 2. If metadata plus text still overflow, shrink text down to the marker.
-	if len(body) > maxUserMessageBytes && text != "" {
-		payload["text"] = shrinkToLimit(text, func(s string) ([]byte, error) {
-			payload["text"] = s
-			return wrap()
-		}, textTrimMarker)
-		if body, err = wrap(); err != nil {
-			return err
-		}
-	}
-
-	if len(body) > maxUserMessageBytes {
-		return fmt.Errorf("%w: %d bytes after trimming the prompt", ErrUserMessageTooLarge, len(body))
-	}
-	log.Printf("user_message trimmed %d -> %d bytes (limit %d)", original, len(body), maxUserMessageBytes)
+	payload["text"] = relayPrompt(in.SystemPrompt, prompt)
 	return nil
-}
-
-const textTrimMarker = "\n\n[earlier conversation trimmed to fit the upstream 64 KB frame limit]\n\n"
-
-// shrinkToLimit removes bytes from the middle of s until wrap(s) fits. It
-// preserves the beginning and the end, so recent context and trailing
-// authority notices survive.
-func shrinkToLimit(s string, wrap func(string) ([]byte, error), marker string) string {
-	out := s
-	for range 6 {
-		body, err := wrap(out)
-		if err != nil || len(body) <= maxUserMessageBytes {
-			return out
-		}
-		over := len(body) - maxUserMessageBytes
-		next := shrinkMiddle(out, over, marker)
-		if next == out {
-			return out
-		}
-		out = next
-	}
-	return out
-}
-
-// shrinkMiddle removes about `remove` bytes from s while keeping 1/4 of the
-// retained text from the head and 3/4 from the tail. Slices are adjusted to
-// UTF-8 rune boundaries so the JSON stays valid.
-func shrinkMiddle(s string, remove int, marker string) string {
-	const minKeep = 4096
-	target := len(s) - remove - len(marker)
-	if target < minKeep {
-		target = minKeep
-	}
-	if target >= len(s) {
-		return s
-	}
-	head := target / 4
-	if head > len(s) {
-		head = len(s)
-	}
-	for head > 0 && !utf8.RuneStart(s[head]) {
-		head--
-	}
-	tailStart := len(s) - (target - head)
-	if tailStart < head {
-		tailStart = head
-	}
-	for tailStart < len(s) && !utf8.RuneStart(s[tailStart]) {
-		tailStart++
-	}
-	return s[:head] + marker + s[tailStart:]
 }
 
 func titleFor(prompt string) string {
