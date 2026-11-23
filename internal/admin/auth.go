@@ -56,9 +56,20 @@ func sameOrigin(r *http.Request) bool {
 		return true
 	}
 	parsed, err := url.Parse(origin)
-	return err == nil && (parsed.Scheme == "https" || parsed.Scheme == "http") &&
-		parsed.User == nil && parsed.Path == "" && parsed.RawQuery == "" && parsed.Fragment == "" &&
-		strings.EqualFold(parsed.Host, r.Host) && (r.TLS == nil || parsed.Scheme == "https")
+	if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") ||
+		parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" ||
+		(r.TLS != nil && parsed.Scheme != "https") {
+		return false
+	}
+	if strings.EqualFold(parsed.Host, r.Host) {
+		return true
+	}
+	// Some local clients strip the Origin port. Only trust browser-confirmed
+	// same-origin requests to the identical loopback IP in that case.
+	target := url.URL{Host: r.Host}
+	ip := net.ParseIP(parsed.Hostname())
+	return r.Header.Get("Sec-Fetch-Site") == "same-origin" && parsed.Port() == "" &&
+		ip != nil && ip.IsLoopback() && strings.EqualFold(parsed.Hostname(), target.Hostname())
 }
 
 func validCSRF(expected, actual string) bool {
