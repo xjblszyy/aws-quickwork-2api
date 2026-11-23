@@ -188,6 +188,12 @@ tbody tr:last-child td { border-bottom: none; }
 #oauth-callback-form > .button { margin-top: 15px; }
 .flow-footer { display: flex; justify-content: space-between; gap: 10px; margin-top: 22px; padding-top: 15px; border-top: 1px solid var(--border); }
 .stack { display: grid; gap: 20px; }
+.mapping-grid { display: grid; grid-template-columns: max-content minmax(0, 1fr); align-items: center; gap: 10px 14px; margin: 0; padding: 0; border: none; }
+.mapping-grid legend { margin-bottom: 10px; padding: 0; font-size: 13px; font-weight: 600; }
+.mapping-grid > label { margin: 0; font-family: ui-monospace, Consolas, monospace; font-weight: 500; }
+.key-list { display: grid; gap: 8px; }
+.key-row { display: flex; gap: 8px; }
+.key-row input { font-family: ui-monospace, Consolas, monospace; }
 .code-input { font-family: ui-monospace, "Cascadia Code", Consolas, monospace; font-size: 12px; tab-size: 2; }
 #config-form .notice { margin-bottom: 18px; font-size: 12px; }
 #config-form .panel > .muted { margin-bottom: 18px; font-size: 12px; }

@@ -110,13 +110,14 @@ func (s *Server) handleStatus(w http.ResponseWriter, r *http.Request) {
 			break
 		}
 	}
-	models := append([]string(nil), s.cfg.Models...)
-	for alias := range s.cfg.ModelMappings {
+	routing := s.cfg.Routing()
+	models := append([]string(nil), routing.Models...)
+	for alias := range routing.Mappings {
 		models = append(models, alias)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"service": "quickwork-openai", "started_at": s.startedAt.Unix(), "accounts": counts,
-		"models": models, "default_model": s.cfg.DefaultModel,
+		"models": models, "default_model": routing.DefaultModel,
 		"api_keys_configured": keysConfigured, "webui_enabled": s.cfg.WebUI.Enabled,
 		"usage_sync": s.accounts.UsageStatus(),
 	})

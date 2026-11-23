@@ -84,9 +84,10 @@ func (s *Server) handleModels(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	created := time.Now().Unix()
-	data := make([]map[string]any, 0, len(s.cfg.Models))
-	models := append([]string(nil), s.cfg.Models...)
-	for alias := range s.cfg.ModelMappings {
+	routing := s.cfg.Routing()
+	data := make([]map[string]any, 0, len(routing.Models))
+	models := append([]string(nil), routing.Models...)
+	for alias := range routing.Mappings {
 		models = append(models, alias)
 	}
 	sort.Strings(models)
@@ -318,6 +319,7 @@ func (s *Server) executeChat(w http.ResponseWriter, r *http.Request, req ChatReq
 					row.AccountID = usedAccount.ID
 				}
 				row.ContextMode = res.ContextMode
+				row.ServedModel = res.ServedModel
 				if row.Protocol == "compact" && finalErr == nil {
 					row.ContextMode = "summary"
 				}
@@ -442,7 +444,7 @@ func (s *Server) executeChat(w http.ResponseWriter, r *http.Request, req ChatReq
 		if lastErr != nil {
 			conv.reset()
 			status, code := chatErrorStatus(lastErr)
-			logChatDone(id, startedAt, in, usedAccount, attempts, "failed", "", res.Usage, 0, lastErr)
+			logChatDone(id, startedAt, in, usedAccount, attempts, "failed", "", res.Usage, res.ServedModel, 0, lastErr)
 			writeOpenAIError(w, status, code, publicChatError(code))
 			return
 		}
@@ -466,7 +468,7 @@ func (s *Server) executeChat(w http.ResponseWriter, r *http.Request, req ChatReq
 		if len(toolCalls) > 0 {
 			finish = "tool_calls"
 		}
-		logChatDone(id, startedAt, in, usedAccount, attempts, "ok", finish, res.Usage, len(toolCalls), nil)
+		logChatDone(id, startedAt, in, usedAccount, attempts, "ok", finish, res.Usage, res.ServedModel, len(toolCalls), nil)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"id":      id,
 			"object":  "chat.completion",
@@ -571,11 +573,11 @@ func (s *Server) executeChat(w http.ResponseWriter, r *http.Request, req ChatReq
 		conv.reset()
 		if !started {
 			status, code := chatErrorStatus(lastErr)
-			logChatDone(id, startedAt, in, usedAccount, attempts, "failed", "", res.Usage, 0, lastErr)
+			logChatDone(id, startedAt, in, usedAccount, attempts, "failed", "", res.Usage, res.ServedModel, 0, lastErr)
 			writeOpenAIError(w, status, code, publicChatError(code))
 			return
 		}
-		logChatDone(id, startedAt, in, usedAccount, attempts, "failed", "", res.Usage, 0, lastErr)
+		logChatDone(id, startedAt, in, usedAccount, attempts, "failed", "", res.Usage, res.ServedModel, 0, lastErr)
 		writeStreamError(publicChatError("upstream_error"))
 		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
 		flusher.Flush()
@@ -613,7 +615,7 @@ func (s *Server) executeChat(w http.ResponseWriter, r *http.Request, req ChatReq
 		}}}, nil)
 	}
 	writeChunk(map[string]any{}, finish)
-	logChatDone(id, startedAt, in, usedAccount, attempts, "ok", finish, res.Usage, len(outTools), nil)
+	logChatDone(id, startedAt, in, usedAccount, attempts, "ok", finish, res.Usage, res.ServedModel, len(outTools), nil)
 	if req.StreamOptions != nil && req.StreamOptions.IncludeUsage {
 		writePayload(map[string]any{
 			"id":      id,
@@ -646,12 +648,15 @@ func accountLogLabel(a *store.Account) string {
 
 // logChatDone emits one completion line per chat request with the outcome,
 // selected account, mapped model, token usage, finish reason, and error.
-func logChatDone(id string, startedAt time.Time, in ChatInput, acct *store.Account, attempts int, status, finish string, u Usage, toolCalls int, err error) {
+func logChatDone(id string, startedAt time.Time, in ChatInput, acct *store.Account, attempts int, status, finish string, u Usage, servedModel string, toolCalls int, err error) {
 	if finish == "" {
 		finish = "-"
 	}
-	line := fmt.Sprintf("chat %s done status=%s account=%s model=%s attempts=%d elapsed=%s tokens{prompt=%d completion=%d total=%d cache_read=%d cache_write=%d} finish=%s tool_calls=%d",
-		id, status, accountLogLabel(acct), in.Model, attempts, time.Since(startedAt).Round(time.Millisecond),
+	if servedModel == "" {
+		servedModel = "-"
+	}
+	line := fmt.Sprintf("chat %s done status=%s account=%s model=%s served_model=%s attempts=%d elapsed=%s tokens{prompt=%d completion=%d total=%d cache_read=%d cache_write=%d} finish=%s tool_calls=%d",
+		id, status, accountLogLabel(acct), in.Model, servedModel, attempts, time.Since(startedAt).Round(time.Millisecond),
 		u.PromptTokens, u.CompletionTokens, u.TotalTokens, u.CacheReadTokens, u.CacheWriteTokens, finish, toolCalls)
 	if err != nil {
 		log.Printf("%s error=%v", line, err)
@@ -669,7 +674,8 @@ func (s *Server) maxAttempts() int {
 }
 
 func (s *Server) mapModel(model string) string {
-	if mapped, ok := s.cfg.ModelMappings[strings.TrimSpace(model)]; ok {
+	routing := s.cfg.Routing()
+	if mapped, ok := routing.Mappings[strings.TrimSpace(model)]; ok {
 		return mapped
 	}
 	m := strings.ToLower(strings.TrimSpace(model))
@@ -679,10 +685,10 @@ func (s *Server) mapModel(model string) string {
 	case "smart", "fast", "balanced", "auto":
 		return m
 	case "":
-		return s.cfg.DefaultModel
+		return routing.DefaultModel
 	default:
-		log.Printf("unknown model %q, using %s", model, s.cfg.DefaultModel)
-		return s.cfg.DefaultModel
+		log.Printf("unknown model %q, using %s", model, routing.DefaultModel)
+		return routing.DefaultModel
 	}
 }
 

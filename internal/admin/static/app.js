@@ -7,10 +7,13 @@ const translations = {
   compatibilityNotes: ["Images: base64 PNG/JPEG/GIF only, up to 8 images and 5 MiB each. Remote URL fetching is disabled. Compaction items require the same API key and survive restarts when authentication is enabled. Token counting is estimated. Native hosted web search and previous_response_id are not supported.", "图片支持 base64 PNG/JPEG/GIF，每次最多 8 张、每张 5 MiB、合计 20 MiB；不代抓远程图片 URL。压缩项绑定同一 API Key，启用鉴权时可跨服务重启使用。Token 计数为估算；不支持原生托管搜索或 previous_response_id。"],
   clientAccess: ["Client access", "客户端接入"],
   accessHint: ["Use a separate inference API key. Never share your administrator password. Use HTTPS and a restricted reverse proxy for remote access.", "使用独立的推理 API Key，不要分享管理密码。远程接入请配置 HTTPS 和受限反向代理。"],
-  modelMappings: ["Model mappings (JSON)", "模型映射（JSON）"],
-  mappingHint: ["Map client model names to smart, fast, balanced or auto. Saved changes require a restart.", "将客户端模型名映射为 smart、fast、balanced 或 auto；保存后需重启服务。"],
+  modelMappings: ["Model mappings", "模型映射"],
+  mappingHint: ["Enter the client model names that should use each upstream model, separated by commas. Leave blank to use the upstream name itself. Changes apply immediately after saving.", "为每个上游模型填写映射到它的客户端模型名，多个用逗号分隔；留空则直接使用上游模型名。保存后立即生效，无需重启。"],
+  mappingNative: ["{alias} is a built-in model name and cannot be mapped to another model.", "{alias} 是内置模型名，不能映射到其他模型。"],
+  mappingDuplicate: ["{alias} is mapped to more than one upstream model.", "{alias} 被映射到了多个上游模型。"],
+  mappingInvalid: ["Model names must be 1-128 characters.", "模型名长度须为 1–128 个字符。"],
   generateKey: ["Generate a replacement API key", "生成替换 API Key"],
-  generateKeyHint: ["Copy the generated key before saving. Saving replaces existing keys; keys cannot be retrieved later.", "保存前复制生成的密钥。保存会替换已有密钥，之后无法再次查看。"],
+  generateKeyHint: ["Saving replaces existing keys. The new key takes effect after a restart.", "保存会替换已有密钥，重启服务后生效。"],
   protocol: ["Protocol", "协议"],
   recordsHint: ["One record per client request, including failures. No prompts, responses, images or API keys are stored. Retained for 30 days, up to 10,000 records.", "每条客户端请求记录一次，包含失败请求；不保存对话正文、图片或密钥。最多保留 30 天、10,000 条。"],
   allProtocols: ["All protocols", "全部协议"],
@@ -104,15 +107,19 @@ const translations = {
   updateSignIn: ["Update sign-in status", "更新登录状态"],
   cancelSignIn: ["Cancel this sign-in", "取消本次登录"],
   serviceSettings: ["Service settings", "服务设置"],
-  settingsIntro: ["Changes are saved to disk, not hot-reloaded into the running process.", "设置仅保存到文件，不会在当前进程中热更新。"],
-  restartRequired: ["Restart required after saving", "保存后需要重启"],
+  settingsIntro: ["Model mappings apply immediately after saving. Other settings are saved to disk and apply after a restart.", "模型映射保存后立即生效；其他设置保存到文件，重启服务后生效。"],
+  restartRequired: ["Mappings apply live; other settings need a restart", "映射即时生效，其他设置需重启"],
   configuration: ["Configuration", "配置内容"],
   reload: ["Reload", "重新读取"],
   settingsWarning: ["Keep the complete JSON structure. Listener, database, and WebUI changes require a restart. Disabling the WebUI will make this console unavailable.", "请保留完整 JSON 结构。修改监听地址、数据库或关闭 WebUI 都需要重新启动；关闭后将无法使用本控制台。"],
   listenerOverride: ["The listener is overridden by a startup argument. Editing the configuration will not override that argument.", "当前监听地址由启动参数覆盖；修改配置文件不会覆盖该启动参数。"],
   settingsJSON: ["Settings JSON", "配置 JSON"],
   inferenceKeys: ["Inference API keys", "推理 API Keys"],
-  keysHint: ["Existing keys are never sent to the browser. Leave blank to keep them; new values replace all keys.", "现有密钥不会返回浏览器。留空保留原有密钥，输入新值将替换全部密钥。"],
+  keysHint: ["Leave the replacement field blank to keep the current keys; new values replace all keys.", "替换框留空则保留当前密钥，输入新值将替换全部密钥。"],
+  copyKey: ["Copy", "复制"],
+  keyCopied: ["API key copied.", "API Key 已复制。"],
+  keyCopyUnavailable: ["Automatic copying is unavailable. Select the key and copy it manually.", "当前浏览器无法自动复制，请选中密钥后手动复制。"],
+  noAPIKeys: ["No API keys are configured; inference authentication is disabled.", "尚未配置 API Key，推理接口未启用鉴权。"],
   replacementKeys: ["Replacement keys (one per line, optional)", "替换密钥（每行一个，选填）"],
   clearAllKeys: ["Clear all API keys (disable key authentication for inference)", "清空全部 API Keys（关闭推理接口的密钥鉴权）"],
   saveHint: ["After a successful save, restart the service to apply the new settings.", "成功保存后，重新启动服务以应用新设置。"],
@@ -121,7 +128,7 @@ const translations = {
   sendMessage: ["Send a message", "发送消息"],
   modelAlias: ["Model alias", "模型别名"],
   inferenceKeyLabel: ["Inference API key (not the administrator password)", "推理 API Key（不是管理密码）"],
-  keyMemoryHint: ["The key stays in this page's memory and is cleared on sign-out.", "密钥仅保留在本页内存中，退出登录时清除。"],
+  keyMemoryHint: ["The current inference key is filled in by default.", "默认已填入当前推理密钥。"],
   message: ["Message", "消息"],
   sendRequest: ["Send request", "发送请求"],
   cancelRequest: ["Cancel request", "取消请求"],
@@ -143,7 +150,7 @@ const translations = {
   disabled: ["Disabled", "已停用"],
   serviceReachable: ["Service reachable", "服务可连接"],
   defaultModel: ["Default: {model}", "默认：{model}"],
-  playgroundKeyRequired: ["API key authentication is enabled. Use an inference key, not the management password. The key stays only in this page's memory.", "此服务已启用 API Key 鉴权。请填写推理密钥而非管理密码，密钥仅保留在本页内存中。"],
+  playgroundKeyRequired: ["API key authentication is enabled. The current inference key is filled in by default; do not use the management password.", "此服务已启用 API Key 鉴权，默认已填入当前推理密钥；请勿填写管理密码。"],
   playgroundKeyOptional: ["API key authentication is disabled, so this field may be empty. Do not enter the management password here.", "此服务未启用 API Key 鉴权，可留空。请勿在此填写管理密码。"],
   confirmDelete: ["Delete account “{name}”? This removes its local credentials. You will need to sign in again.", "确定删除账号“{name}”？这会移除本地凭证，之后需要重新登录。"],
   accountUpdated: ["Account status updated.", "账号状态已更新。"],
@@ -156,7 +163,7 @@ const translations = {
   enable: ["Enable", "启用"],
   disable: ["Disable", "停用"],
   delete: ["Delete", "删除"],
-  keyCount: ["{count} stored keys", "已保存 {count} 个密钥"],
+  keyCount: ["{count} active keys", "当前生效 {count} 个密钥"],
   flowDiscovery: ["Step 1: Open discovery, sign in, and paste the complete callback URL", "步骤 1：打开 discovery 链接，登录后粘贴完整回调 URL"],
   flowAuthorize: ["Step 2: Open authorization, approve, and paste the final callback URL", "步骤 2：打开授权链接，授权后粘贴最终回调 URL"],
   flowComplete: ["Account sign-in complete; saved on the server", "账号登录完成，已保存至服务器"],
@@ -178,10 +185,11 @@ const translations = {
   settingsReloaded: ["Configuration reloaded.", "配置已重新读取。"],
   jsonObjectRequired: ["Settings must be a JSON object.", "配置必须是 JSON 对象。"],
   invalidSettings: ["Invalid JSON configuration. Check the syntax and use a JSON object.", "JSON 配置无效。请检查语法，并使用 JSON 对象。"],
-  confirmSave: ["Changes require a manual service restart after saving. Save settings?", "保存后需要手动重新启动服务才会生效。确定保存？"],
+  confirmSave: ["Model mappings apply immediately. Other changes require a manual service restart. Save settings?", "模型映射将立即生效，其他变更需要手动重启服务后生效。确定保存？"],
   warnDisableWebUI: ["Warning: the management UI will be disabled after restarting.", "警告：重新启动后将关闭管理界面。"],
   warnClearKeys: ["Warning: all API keys will be cleared and inference requests will no longer require a key.", "警告：全部 API Keys 将被清空，推理接口将不再要求密钥。"],
-  settingsSaved: ["Settings saved. Restart the service manually to apply the changes.", "配置已保存，请手动重新启动服务以应用变更。"],
+  settingsSaved: ["Settings saved. Model mappings are live; restart the service to apply the other changes.", "配置已保存，模型映射已生效；其他变更需手动重启服务后生效。"],
+  settingsApplied: ["Settings saved and applied. No restart is needed.", "配置已保存并立即生效，无需重启。"],
   waitingResponse: ["Waiting for the upstream response…", "正在等待上游响应…"],
   noResponseText: ["The response contains no text.", "响应没有文本内容。"],
   requestComplete: ["Request complete", "请求已完成"],
@@ -434,9 +442,10 @@ function clearSession() {
   elements["records-body"].replaceChildren();
   elements["record-detail"].textContent = "";
   elements["record-detail-panel"].hidden = true;
-  elements["model-mappings"].value = "";
+  for (const input of document.querySelectorAll(".mapping-input")) input.value = "";
   elements["login-password"].value = "";
   elements["playground-api-key"].value = "";
+  elements["current-api-keys"].replaceChildren();
   elements["playground-prompt"].value = "";
   setRawText(elements["playground-output"], "");
   setTranslation(elements["playground-state"], "noRequest");
@@ -755,10 +764,39 @@ function renderQuota(quota) {
   return cell;
 }
 
+const upstreamModels = ["smart", "fast", "balanced", "auto"];
+
+function renderMappings(mappings) {
+  const aliases = Object.fromEntries(upstreamModels.map(model => [model, []]));
+  for (const [alias, target] of Object.entries(mappings || {})) if (aliases[target] && alias !== target) aliases[target].push(alias);
+  for (const model of upstreamModels) elements[`mapping-${model}`].value = aliases[model].sort().join(", ");
+}
+
+function mappingError(key, parameters = {}) {
+  const error = new Error(translate(key, parameters));
+  error.translationKey = key;
+  error.translationParameters = parameters;
+  return error;
+}
+
+function collectMappings() {
+  const mappings = {};
+  for (const model of upstreamModels) {
+    for (const alias of elements[`mapping-${model}`].value.split(/[,，\n]/).map(value => value.trim()).filter(Boolean)) {
+      if (alias === model) continue;
+      if (alias.length > 128 || /[\r\n\t]/.test(alias)) throw mappingError("mappingInvalid");
+      if (upstreamModels.includes(alias)) throw mappingError("mappingNative", { alias });
+      if (Object.hasOwn(mappings, alias) && mappings[alias] !== model) throw mappingError("mappingDuplicate", { alias });
+      mappings[alias] = model;
+    }
+  }
+  return mappings;
+}
+
 function renderConfig(data) {
   state.config = data;
   elements["config-json"].value = JSON.stringify(data.settings || {}, null, 2);
-  elements["model-mappings"].value = JSON.stringify(data.settings?.model_mappings || {}, null, 2);
+  renderMappings(data.settings?.model_mappings);
   elements["openai-base-url"].value = `${location.origin}/v1`;
   elements["anthropic-base-url"].value = location.origin;
   elements["client-config-examples"].textContent = `# Codex config.toml\nmodel = "opus5.5"\nmodel_provider = "quickwork"\nweb_search = "disabled"\n\n[model_providers.quickwork]\nname = "AWS Quick"\nbase_url = "${location.origin}/v1"\nenv_key = "QUICKPROXY_API_KEY"\nwire_api = "responses"\n\n# Claude Code environment\nANTHROPIC_BASE_URL=${location.origin}\nANTHROPIC_API_KEY=<your inference API key>\n# Use --model opus5.5\n\n# OpenAI SDK\nbase_url="${location.origin}/v1"\napi_key=<your inference API key>`;
@@ -770,8 +808,54 @@ function renderConfigMetadata(data) {
   elements["api-key-env-notice"].hidden = !envKeys;
   for (const id of ["replacement-api-keys", "generate-api-key", "clear-api-keys"]) elements[id].disabled = envKeys;
   setTranslation(elements["api-key-count"], "keyCount", { count: data.api_keys_count || 0 });
+  renderAPIKeys(data.api_keys || []);
   elements["config-override"].hidden = !data.overrides?.addr;
   elements["restart-notice"].hidden = !data.restart_required;
+}
+
+function renderAPIKeys(keys) {
+  const container = elements["current-api-keys"];
+  if (!keys.length) {
+    const empty = document.createElement("p");
+    empty.className = "muted";
+    setTranslation(empty, "noAPIKeys");
+    container.replaceChildren(empty);
+    return;
+  }
+  container.replaceChildren(...keys.map(key => {
+    const row = document.createElement("div");
+    row.className = "key-row";
+    const input = document.createElement("input");
+    input.readOnly = true;
+    input.value = key;
+    input.setAttribute("aria-label", translate("inferenceKeys"));
+    input.addEventListener("focus", () => input.select());
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "button";
+    setTranslation(button, "copyKey");
+    button.addEventListener("click", () => copyAPIKey(input));
+    row.append(input, button);
+    return row;
+  }));
+  if (!elements["playground-api-key"].value) elements["playground-api-key"].value = keys[0];
+}
+
+async function copyAPIKey(input) {
+  let copied = false;
+  try {
+    await navigator.clipboard.writeText(input.value);
+    copied = true;
+  } catch {
+    input.focus();
+    input.select();
+    try { copied = document.execCommand("copy"); } catch { copied = false; }
+  }
+  if (copied) showMessage("keyCopied", "success");
+  else {
+    input.select();
+    showMessage("keyCopyUnavailable", "warning");
+  }
 }
 
 async function loadConfig() {
@@ -1106,11 +1190,16 @@ elements["config-form"].addEventListener("submit", async event => {
   try {
     settings = JSON.parse(elements["config-json"].value);
     if (settings === null || typeof settings !== "object" || Array.isArray(settings)) throw new Error(translate("jsonObjectRequired"));
-    settings.model_mappings = JSON.parse(elements["model-mappings"].value || "{}");
-    if (!settings.model_mappings || Array.isArray(settings.model_mappings) || typeof settings.model_mappings !== "object") throw new Error("Invalid mappings");
   } catch {
     showMessage("invalidSettings", "error");
     elements["config-json"].focus();
+    return;
+  }
+  try {
+    settings.model_mappings = collectMappings();
+  } catch (error) {
+    reportError(error);
+    elements["mapping-smart"].focus();
     return;
   }
   const warnings = [translate("confirmSave")];
@@ -1129,7 +1218,8 @@ elements["config-form"].addEventListener("submit", async event => {
     renderConfig(data);
     elements["clear-api-keys"].checked = false;
     elements["replacement-api-keys"].disabled = Boolean(data.overrides?.api_keys);
-    showMessage("settingsSaved", "success");
+    showMessage(data.restart_required ? "settingsSaved" : "settingsApplied", "success");
+    loadStatus().catch(reportError);
   } catch (error) {
     reportError(error);
   } finally {
@@ -1200,7 +1290,7 @@ async function loadRecords() {
   elements["records-body"].replaceChildren();
   for (const row of data.data) {
     const tr = document.createElement("tr");
-    for (const value of [`${new Date(row.started_at).toLocaleString()}\n${row.id}`, row.protocol, `${row.model || "—"} → ${row.upstream_model || "—"}`, `${row.status}${row.error_code ? ` / ${row.error_code}` : ""}`, `${row.duration_ms} ms / ${row.attempts}`, `${row.prompt_tokens} + ${row.completion_tokens} (${row.total_tokens})`, row.account_id || "—"]) {
+    for (const value of [`${new Date(row.started_at).toLocaleString()}\n${row.id}`, row.protocol, `${row.model || "—"} → ${row.upstream_model || "—"}${row.served_model ? `\n${row.served_model}` : ""}`, `${row.status}${row.error_code ? ` / ${row.error_code}` : ""}`, `${row.duration_ms} ms / ${row.attempts}`, `${row.prompt_tokens} + ${row.completion_tokens} (${row.total_tokens})`, row.account_id || "—"]) {
       const td = document.createElement("td"); td.textContent = String(value); tr.append(td);
     }
     const cell = document.createElement("td");
@@ -1225,10 +1315,10 @@ elements["generate-api-key"].addEventListener("click", () => {
   elements["clear-api-keys"].checked = false; elements["replacement-api-keys"].disabled = false; elements["replacement-api-keys"].focus();
 });
 elements["model-mappings"].addEventListener("input", () => {
-  try { const settings = JSON.parse(elements["config-json"].value); settings.model_mappings = JSON.parse(elements["model-mappings"].value); elements["config-json"].value = JSON.stringify(settings, null, 2); } catch { /* Keep incomplete edits until the user finishes typing. */ }
+  try { const settings = JSON.parse(elements["config-json"].value); settings.model_mappings = collectMappings(); elements["config-json"].value = JSON.stringify(settings, null, 2); } catch { /* Keep incomplete edits until the user finishes typing. */ }
 });
 elements["config-json"].addEventListener("input", () => {
-  try { const settings = JSON.parse(elements["config-json"].value); elements["model-mappings"].value = JSON.stringify(settings.model_mappings || {}, null, 2); } catch { /* Keep incomplete JSON editable. */ }
+  try { renderMappings(JSON.parse(elements["config-json"].value).model_mappings); } catch { /* Keep incomplete JSON editable. */ }
 });
 
 const savedTheme = readPreference("theme");

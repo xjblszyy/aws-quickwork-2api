@@ -31,9 +31,9 @@ A single Go executable handles native OAuth / PKCE login, SQLite account storage
 
 Use `http://127.0.0.1:8080/v1` as the OpenAI / Codex base URL, and `http://127.0.0.1:8080` as Claude Code's `ANTHROPIC_BASE_URL`. Replace the port or host for your deployment. For remote access, proxy only inference paths over HTTPS; do not expose management alongside them.
 
-Inference accepts Bearer and `x-api-key` authentication. Configure `api_keys` or the comma-separated `QUICKPROXY_API_KEYS` environment variable. Environment keys override file keys, are never saved back to the configuration, and an explicitly empty variable fails startup. Administrator passwords are separate.
+Inference accepts Bearer and `x-api-key` authentication. Configure `api_keys` or the comma-separated `QUICKPROXY_API_KEYS` environment variable. Environment keys override file keys, are never saved back to the configuration, and an explicitly empty variable fails startup. Administrator passwords are separate. The first run generates a default inference key (`sk-qw-…`) when it creates `config.json`; after signing in to the WebUI, view and copy the active keys under Settings → Inference API keys. The Playground fills in the current key by default.
 
-Configure `"model_mappings": {"opus5.5": "smart"}` in configuration or the WebUI and restart. Targets are `smart`, `fast`, `balanced`, or `auto`. Aliases appear in `/v1/models`; responses retain the requested model name. The Settings page includes client examples. Codex requires `wire_api="responses"` and `web_search="disabled"`; client function / custom tools and namespaces are supported, not hosted OpenAI search.
+In the WebUI Settings page, enter client model names next to each upstream model (smart / fast / balanced / auto), separated by commas; leave a row blank to use the upstream name itself. Mappings saved from the WebUI apply immediately without a restart. Alternatively configure `"model_mappings": {"opus5.5": "smart"}` in the file and restart. Targets are `smart`, `fast`, `balanced`, or `auto`. The actual upstream model (for example `us.anthropic.claude-opus-5-5`) is read from `turn_usage.served_model_id` and shown as `served_model` in request logs and usage records. Aliases appear in `/v1/models`; responses retain the requested model name. The Settings page includes client examples. Codex requires `wire_api="responses"` and `web_search="disabled"`; client function / custom tools and namespaces are supported, not hosted OpenAI search.
 
 All three protocols support real base64 PNG / JPEG / GIF attachments: up to 8 images, 5 MiB each, 20 MiB combined, and 8192 pixels per dimension. Upload and DLP approval are required. Remote image URL fetching is disabled to avoid SSRF. Unsupported formats, gateway image input, and upload failures produce errors, never silent text-only fallbacks.
 
@@ -123,7 +123,7 @@ curl http://127.0.0.1:8080/v1/chat/completions \
   }'
 ```
 
-When `api_keys` is empty, `local` can be any value. If keys are configured, replace it with an allowed inference key. `X-Api-Key` is also supported.
+Replace `local` with an allowed inference key, such as the default key generated on first run. If `api_keys` is set to empty, any value is accepted. `X-Api-Key` is also supported.
 
 With the OpenAI Python SDK:
 
@@ -160,7 +160,7 @@ Deployment details:
 - The process runs as UID/GID `10001:10001`. A bind-mounted data directory must already be writable by this user.
 - Compose uses a read-only root filesystem, drops all Linux capabilities, enables `no-new-privileges`, and provides a temporary `/tmp`.
 - The health check calls only `/healthz` inside the container; it does not contact the upstream service or require accounts.
-- There is no default inference API key. Configure `api_keys` before permitting remote access, and use a TLS reverse proxy with access controls rather than directly exposing the management interface.
+- The first run generates a default inference API key, which can be copied from the WebUI Settings page. For remote access, use a TLS reverse proxy with access controls rather than directly exposing the management interface.
 
 Optional manual CLI login inside the running container:
 
@@ -198,7 +198,7 @@ The embedded WebUI uses the same listener as the inference API. Set `webui.enabl
 - **Overview:** process start time, models, account availability, real upstream call outcomes, cumulative attempt time, reported tokens, USD costs, and ACP credits grouped by unit. Legacy selection counts remain separate.
 - **Accounts:** per-account call / duration / token / cost / credit statistics and official monthly-minute quotas, alongside non-secret account information, enable/disable rotation, token refresh, and confirmed local deletion. Quota synchronization is separate from token refresh. Deletion does not revoke upstream authorization.
 - **Add Account:** the existing two-stage OAuth / PKCE flow, using pasted browser callbacks without requiring server or container callback-port access.
-- **Configuration:** edit JSON and save it to disk. The running configuration is not hot-reloaded; restart the service to apply changes. Inference keys are never returned to the browser. Leave the replacement field empty to preserve existing keys; explicitly choose clear to remove all keys.
+- **Configuration:** fill in model mappings per upstream model and edit the remaining settings as JSON, then save to disk. Model mappings, the model list, and the default model apply immediately; other settings require a restart. The Inference API keys panel shows the active keys with copy buttons. Leave the replacement field empty to preserve existing keys; explicitly choose clear to remove all keys.
 - **Playground:** non-streaming chat requests. Supply an inference API key separately if configured; the administrator password cannot authenticate inference. Secrets are not persisted in browser storage.
 
 ### Add an Account in the Browser
@@ -209,7 +209,7 @@ The embedded WebUI uses the same listener as the inference API. Set `webui.enabl
 4. Open the returned authorize link, finish authorization, and submit the final complete callback URL containing `code` and `state`.
 5. The account is stored in SQLite and the list updates. Cancel an unfinished flow or restart it after expiry.
 
-Callback URLs contain temporary authorization data: do not share them in chat, logs, or issue reports. Account tokens, refresh tokens, and client secrets are not returned by the management API.
+Callback URLs contain temporary authorization data: do not share them in chat, logs, or issue reports. Account tokens, refresh tokens, and client secrets are not returned by the management API; only active inference API keys are returned, and only to administrator sessions.
 
 ### Account Statistics and Official Usage
 
@@ -289,7 +289,7 @@ Commands create `config.json` with defaults if it does not exist. Relative datab
 |---|---|---|
 | `addr` | `127.0.0.1:8080` | Shared API / WebUI listener |
 | `database` | `data/quickwork.db` | SQLite path, relative to the configuration directory |
-| `api_keys` | `[]` | Allowed inference keys; empty disables inference authentication |
+| `api_keys` | One generated on first run | Allowed inference keys; empty disables inference authentication |
 | `models` | `smart,fast,balanced,auto` | Local model aliases returned by `/v1/models` |
 | `default_model` | `smart` | Fallback mapping for unknown model names |
 | `request_timeout` | `5m` | Timeout for an upstream request |

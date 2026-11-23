@@ -2,12 +2,15 @@
 package config
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 )
 
@@ -93,6 +96,42 @@ type Config struct {
 	resolvedDatabase string
 	fileAPIKeys      []string
 	apiKeysFromEnv   bool
+	routing          *routingState
+}
+
+// ModelRouting is the model alias configuration that can change while the
+// server is running.
+type ModelRouting struct {
+	Models       []string
+	Mappings     map[string]string
+	DefaultModel string
+}
+
+type routingState struct {
+	value atomic.Pointer[ModelRouting]
+}
+
+// Routing returns the live model routing. Readers must use it instead of the
+// Models, ModelMappings and DefaultModel fields, which hold startup values.
+func (c *Config) Routing() ModelRouting {
+	if c.routing != nil {
+		if live := c.routing.value.Load(); live != nil {
+			return *live
+		}
+	}
+	return ModelRouting{Models: c.Models, Mappings: c.ModelMappings, DefaultModel: c.DefaultModel}
+}
+
+// SetRouting replaces the live model routing without a restart.
+func (c *Config) SetRouting(models []string, mappings map[string]string, defaultModel string) {
+	if c.routing == nil {
+		c.routing = &routingState{}
+	}
+	live := ModelRouting{Models: append([]string(nil), models...), Mappings: make(map[string]string, len(mappings)), DefaultModel: defaultModel}
+	for alias, target := range mappings {
+		live.Mappings[alias] = target
+	}
+	c.routing.value.Store(&live)
 }
 
 // Default returns the built-in configuration.
@@ -152,6 +191,11 @@ func Load(configPath string) (*Config, error) {
 			return nil, fmt.Errorf("parse %s: %w", abs, err)
 		}
 	case errors.Is(err, os.ErrNotExist):
+		key, err := GenerateAPIKey()
+		if err != nil {
+			return nil, err
+		}
+		cfg.APIKeys = []string{key}
 		if err := write(abs, &cfg); err != nil {
 			return nil, err
 		}
@@ -182,6 +226,7 @@ func Load(configPath string) (*Config, error) {
 		cfg.Database = filepath.Join(filepath.Dir(abs), cfg.Database)
 	}
 	cfg.resolvedDatabase = cfg.Database
+	cfg.routing = &routingState{}
 	return &cfg, nil
 }
 
@@ -198,11 +243,24 @@ func (c *Config) FileValues() Config {
 
 func (c *Config) APIKeysFromEnv() bool { return c.apiKeysFromEnv }
 
+// GenerateAPIKey returns a random inference API key.
+func GenerateAPIKey() (string, error) {
+	buffer := make([]byte, 24)
+	if _, err := rand.Read(buffer); err != nil {
+		return "", fmt.Errorf("generate API key: %w", err)
+	}
+	return "sk-qw-" + hex.EncodeToString(buffer), nil
+}
+
 func write(path string, cfg *Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
-	body, err := json.MarshalIndent(cfg, "", "  ")
+	value := *cfg
+	if value.APIKeys == nil {
+		value.APIKeys = []string{}
+	}
+	body, err := json.MarshalIndent(&value, "", "  ")
 	if err != nil {
 		return err
 	}

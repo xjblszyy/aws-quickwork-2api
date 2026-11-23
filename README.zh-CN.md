@@ -39,15 +39,15 @@
 
 OpenAI SDK / Codex 的 Base URL 使用 `http://127.0.0.1:8080/v1`；Claude Code 的 `ANTHROPIC_BASE_URL` 使用 `http://127.0.0.1:8080`，不带 `/v1`。替换为实际监听端口或反向代理地址。远程部署应仅代理推理路径并使用 HTTPS，不要一并公开管理后台。
 
-推理密钥支持 `Authorization: Bearer <key>` 和 `x-api-key: <key>`。可配置 `api_keys`，也可通过 `QUICKPROXY_API_KEYS` 环境变量提供逗号分隔的密钥列表；环境变量优先，且不会通过保存配置写回文件。显式设置空环境变量会拒绝启动，避免误关闭鉴权。管理密码不能替代推理密钥。
+推理密钥支持 `Authorization: Bearer <key>` 和 `x-api-key: <key>`。可配置 `api_keys`，也可通过 `QUICKPROXY_API_KEYS` 环境变量提供逗号分隔的密钥列表；环境变量优先，且不会通过保存配置写回文件。显式设置空环境变量会拒绝启动，避免误关闭鉴权。管理密码不能替代推理密钥。首次运行生成 `config.json` 时会自动生成一个默认推理 key（`sk-qw-…`）；登录 WebUI 后可在「配置 → 推理 API Keys」查看并复制当前生效的 key，Playground 也会默认填入。
 
-在 WebUI「配置」中设置模型映射，或配置：
+在 WebUI「配置」中按上游模型（smart / fast / balanced / auto）逐行填写要映射到它的客户端模型名，多个用逗号分隔，留空则直接使用上游模型名；也可直接配置：
 
 ```json
 "model_mappings": { "opus5.5": "smart" }
 ```
 
-映射目标为 `smart`、`fast`、`balanced` 或 `auto`。`/v1/models` 列出别名，响应保留客户端请求的模型名；保存配置后重启生效。「配置」页提供 Codex、Claude Code 和 SDK 的接入示例。Codex 需要设置 `wire_api="responses"`、`web_search="disabled"`；支持 function / custom 客户端工具及命名空间，不支持 OpenAI 托管搜索。
+映射目标为 `smart`、`fast`、`balanced` 或 `auto`。`/v1/models` 列出别名，响应保留客户端请求的模型名；在 WebUI 保存的映射立即生效，无需重启，直接修改文件则需重启。上游实际使用的模型（如 `us.anthropic.claude-opus-5-5`）取自 `turn_usage.served_model_id`，在请求日志和使用记录中显示为 `served_model`。「配置」页提供 Codex、Claude Code 和 SDK 的接入示例。Codex 需要设置 `wire_api="responses"`、`web_search="disabled"`；支持 function / custom 客户端工具及命名空间，不支持 OpenAI 托管搜索。
 
 图片支持三种协议中的 base64 PNG、JPEG、GIF，实际上传到上游附件服务并等待 DLP 放行；每次最多 8 张、每张 5 MiB、合计 20 MiB，宽高不超过 8192。为避免 SSRF，不抓取远程图片 URL。不支持的格式、gateway 图片或上传失败会报错，不会静默变成纯文本。
 
@@ -122,7 +122,7 @@ https://quick.aws.com/sn?qwSurface=desktop:<nonce>:18080:1.2.4660
 ./bin/quickproxy server
 ```
 
-服务读取当前目录的 `config.json`。默认监听 `127.0.0.1:8080`。如果 `api_keys` 为空，代理关闭 API key 鉴权，适合纯本机使用。
+服务读取当前目录的 `config.json`。默认监听 `127.0.0.1:8080`。首次生成的配置自带一个默认推理 key；如果把 `api_keys` 改为空，代理关闭 API key 鉴权，仅适合纯本机使用。
 
 WebUI 与推理 API 使用同一地址，打开 `http://127.0.0.1:8080/` 即可访问。启动进程前，请通过你的环境管理方式设置 `QUICKPROXY_ADMIN_PASSWORD` 管理密码环境变量，长度为 12–1024 字节；未设置时仅禁止管理登录，推理 API 不受影响。不要把密码填入文档、命令历史或 `config.json`。
 
@@ -186,7 +186,7 @@ docker compose up -d --build
 - 进程以 UID/GID `10001:10001` 运行。使用 bind mount 替代命名卷时，需要预先授予该用户数据目录写权限。
 - Compose 使用只读根文件系统、丢弃全部 Linux capabilities、`no-new-privileges` 和临时 `/tmp`。
 - 健康检查只调用容器内 `/healthz`，不会访问上游，也不要求已有账号。
-- 不提供默认推理 API key；`api_keys` 默认为空。需要远程访问时先配置推理 API key，再使用带 TLS 和访问控制的反向代理，不要直接暴露管理页面。
+- 首次运行生成配置时会自动生成一个默认推理 API key，可在 WebUI「配置」页复制。需要远程访问时使用带 TLS 和访问控制的反向代理，不要直接暴露管理页面。
 
 也可以在容器内进行手动 CLI 登录：
 
@@ -195,7 +195,7 @@ docker compose exec quickproxy /app/quickproxy login -manual -config /app/data/c
 docker compose exec quickproxy /app/quickproxy accounts -config /app/data/config.json
 ```
 
-WebUI 配置保存后需要重启：
+WebUI 中模型映射以外的配置保存后需要重启：
 
 ```bash
 docker compose restart quickproxy
@@ -224,7 +224,7 @@ WebUI 默认启用，与 OpenAI 兼容 API 共用监听地址。配置 `webui.en
 - **概览**：查看进程启动时间、模型、账号可用状态、真实上游调用及成功/失败次数、累计尝试耗时、官方 Token、美金费用与按单位分别累计的 ACP 积分。旧账号选择次数单独展示。
 - **账号**：查看每账号调用、耗时、Token、费用、积分与官方月度分钟额度，同时支持启用/停用轮询、刷新 token、确认后删除本地账号。用量同步与 Token 刷新是不同操作；删除不会撤销上游授权。
 - **添加账号**：复用现有 OAuth / PKCE 流程，在任意浏览器完成两阶段登录，无需容器或服务器暴露 `18080`。
-- **配置**：以 JSON 编辑配置；保存只写入磁盘，当前运行实例不会热更新，重启服务后生效。API key 不会被回传；留空保留原值，只有明确选择清空才移除全部 key。
+- **配置**：模型映射按上游模型以键值形式填写，其余配置以 JSON 编辑；模型映射、模型列表与默认模型保存后立即生效，其他配置写入磁盘后需重启服务生效。推理 API Keys 区域显示当前生效的 key 并支持一键复制；替换框留空保留原值，只有明确选择清空才移除全部 key。
 - **Playground**：发送非流式聊天请求；如果配置了推理 API key，需要单独输入。管理密码不能用于推理鉴权，页面不持久保存这些秘密。
 
 ### 在 WebUI 添加账号
@@ -315,7 +315,7 @@ WebUI 默认启用，与 OpenAI 兼容 API 共用监听地址。配置 `webui.en
 |---|---|---|
 | `addr` | `127.0.0.1:8080` | HTTP 监听地址 |
 | `database` | `data/quickwork.db` | SQLite 文件；相对路径基于 `config.json` 所在目录 |
-| `api_keys` | `[]` | 允许的本地 API key；为空时关闭鉴权 |
+| `api_keys` | 首次运行自动生成 1 个 | 允许的本地 API key；为空时关闭鉴权 |
 | `models` | `smart,fast,balanced,auto` | `/v1/models` 的基础列表；额外别名由 `model_mappings` 提供 |
 | `model_mappings` | `{}` | 客户端模型名到 smart / fast / balanced / auto 的映射 |
 | `default_model` | `smart` | 未知 model 的映射 |
@@ -344,7 +344,7 @@ WebUI 默认启用，与 OpenAI 兼容 API 共用监听地址。配置 `webui.en
 
 时间字段接受 Go duration 字符串（`30s`、`5m`、`1h`）。
 
-`server -addr ADDRESS` 只覆盖运行时监听地址，不写回文件。Docker 默认使用该参数监听容器网络；WebUI 修改 `addr` 后，若启动命令仍带 `-addr`，下次启动仍以命令行值为准。通过 WebUI 保存的其他配置也仅在重启后生效。
+`server -addr ADDRESS` 只覆盖运行时监听地址，不写回文件。Docker 默认使用该参数监听容器网络；WebUI 修改 `addr` 后，若启动命令仍带 `-addr`，下次启动仍以命令行值为准。通过 WebUI 保存的其他配置（模型映射除外）也仅在重启后生效。
 
 需要 API key 时，把 key 写进 `api_keys`：
 
@@ -475,7 +475,7 @@ chat chatcmpl-... done status=ok account=1:social:user@example.com model=smart a
 - 当单个 `user_message` 超过 64 KB 且账号有 `tenant_url` 时，代理会把该轮用户内容作为临时文本附件上传到 Quick 的附件服务并等待 DLP 扫描；这是绕过单帧上限的方式，内容仍位于你的 Quick 租户内，但受组织 DLP 策略约束。
 - `config.json` 默认不含密钥；如果写入 `api_keys`，不要提交真实 key。
 - 上游登录密码只在 Amazon 的浏览器页面中输入，本项目不会保存上游密码；WebUI 管理密码为独立环境变量，不应使用上游密码。
-- WebUI 返回的配置与账号响应不包含 API key、access token、refresh token 或 client secret；callback URL 只用于当前登录流程，不应分享。
+- WebUI 仅在管理会话内返回当前生效的推理 API key，便于复制；不返回 access token、refresh token 或 client secret。callback URL 只用于当前登录流程，不应分享。
 - 反代默认只监听 `127.0.0.1`。不要把端口直接暴露到公网；如确需远程访问，请自行加 TLS 与访问控制。
 - `quickproxy logout -all` 会删除本地账号与 refresh 状态。
 - 不要提交或分享 `data/` 目录。

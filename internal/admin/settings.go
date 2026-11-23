@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -126,7 +127,7 @@ func validAPIKey(key string) bool {
 
 func (s *Server) writeSettingsLocked(w http.ResponseWriter) {
 	writeJSON(w, http.StatusOK, map[string]any{
-		"settings": settingsFromConfig(s.saved), "api_keys_count": len(s.cfg.APIKeys),
+		"settings": settingsFromConfig(s.saved), "api_keys_count": len(s.cfg.APIKeys), "api_keys": append([]string{}, s.cfg.APIKeys...),
 		"restart_required": s.restartNeeded, "overrides": map[string]bool{"addr": s.addrOverridden, "api_keys": s.cfg.APIKeysFromEnv()},
 	})
 }
@@ -185,7 +186,16 @@ func (s *Server) handleConfigSave(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "config_save_failed", "Could not save configuration; check field values and config directory permissions")
 		return
 	}
+	s.restartNeeded = s.restartNeeded || input.APIKeys != nil || needsRestart(s.saved, candidate)
 	s.saved = candidate
-	s.restartNeeded = true
+	s.cfg.SetRouting(candidate.Models, candidate.ModelMappings, candidate.DefaultModel)
 	s.writeSettingsLocked(w)
+}
+
+// needsRestart reports whether anything other than the live model routing changed.
+func needsRestart(before, after config.Config) bool {
+	a, b := settingsFromConfig(before), settingsFromConfig(after)
+	a.Models, a.ModelMappings, a.DefaultModel = nil, nil, ""
+	b.Models, b.ModelMappings, b.DefaultModel = nil, nil, ""
+	return !reflect.DeepEqual(a, b)
 }

@@ -13,6 +13,7 @@ type RequestRecord struct {
 	Protocol         string           `json:"protocol"`
 	Model            string           `json:"model"`
 	UpstreamModel    string           `json:"upstream_model"`
+	ServedModel      string           `json:"served_model,omitempty"`
 	Stream           bool             `json:"stream"`
 	Status           int              `json:"status"`
 	DurationMS       int64            `json:"duration_ms"`

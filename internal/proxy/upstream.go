@@ -100,6 +100,7 @@ type ChatResult struct {
 	ToolCalls   []ToolCallState
 	Usage       Usage
 	ThreadID    string
+	ServedModel string
 }
 
 // Chat sends one prompt through the QuickWork chat bidi WebSocket. Text
@@ -665,8 +666,15 @@ func (u *Upstream) readEvents(ctx context.Context, conn *websocket.Conn, gateway
 				CacheReadTokens  int      `json:"cache_read_tokens"`
 				CacheWriteTokens int      `json:"cache_write_tokens"`
 				CostUSD          *float64 `json:"cost_usd"`
+				ServedModelID    string   `json:"served_model_id"`
+				ResolvedModelID  string   `json:"resolved_model_id"`
 			}
 			if err := json.Unmarshal(env.Payload, &p); err == nil {
+				if served := strings.TrimSpace(p.ServedModelID); served != "" {
+					result.ServedModel = served
+				} else if resolved := strings.TrimSpace(p.ResolvedModelID); resolved != "" {
+					result.ServedModel = resolved
+				}
 				result.Usage.add(Usage{
 					PromptTokens:     p.InputTokens,
 					CompletionTokens: p.OutputTokens,

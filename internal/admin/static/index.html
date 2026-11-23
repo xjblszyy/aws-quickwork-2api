@@ -133,7 +133,7 @@
           </section>
 
           <section id="page-config" class="page" data-i18n-aria-label="settings" aria-label="Settings" hidden>
-            <div class="page-intro"><div><h2 data-i18n="serviceSettings">Service settings</h2><p class="muted" data-i18n="settingsIntro">Changes are saved to disk, not hot-reloaded into the running process.</p></div><span class="badge neutral" data-i18n="restartRequired">Restart required after saving</span></div>
+            <div class="page-intro"><div><h2 data-i18n="serviceSettings">Service settings</h2><p class="muted" data-i18n="settingsIntro">Model mappings apply immediately after saving. Other settings are saved to disk and apply after a restart.</p></div><span class="badge neutral" data-i18n="restartRequired">Mappings apply live; other settings need a restart</span></div>
             <form id="config-form" class="stack">
               <article class="panel stack">
                 <h3 data-i18n="clientAccess">Client access</h3>
@@ -141,8 +141,14 @@
                 <div><label for="openai-base-url">OpenAI Base URL</label><input id="openai-base-url" readonly></div>
                 <div><label for="anthropic-base-url">Anthropic Base URL</label><input id="anthropic-base-url" readonly></div>
                 <p class="field-hint">Chat: /v1/chat/completions · Responses: /v1/responses · Messages: /v1/messages</p>
-                <div><label for="model-mappings" data-i18n="modelMappings">Model mappings (JSON)</label><textarea id="model-mappings" class="code-input" rows="4" spellcheck="false" placeholder='{"opus5.5":"smart"}'></textarea></div>
-                <p class="field-hint" data-i18n="mappingHint">Map client model names to smart, fast, balanced or auto. Saved changes require a restart.</p>
+                <fieldset id="model-mappings" class="mapping-grid">
+                  <legend data-i18n="modelMappings">Model mappings</legend>
+                  <label for="mapping-smart">smart</label><input id="mapping-smart" class="mapping-input" data-upstream="smart" placeholder="smart" autocomplete="off" spellcheck="false">
+                  <label for="mapping-fast">fast</label><input id="mapping-fast" class="mapping-input" data-upstream="fast" placeholder="fast" autocomplete="off" spellcheck="false">
+                  <label for="mapping-balanced">balanced</label><input id="mapping-balanced" class="mapping-input" data-upstream="balanced" placeholder="balanced" autocomplete="off" spellcheck="false">
+                  <label for="mapping-auto">auto</label><input id="mapping-auto" class="mapping-input" data-upstream="auto" placeholder="auto" autocomplete="off" spellcheck="false">
+                </fieldset>
+                <p class="field-hint" data-i18n="mappingHint">Enter the client model names that should use each upstream model, separated by commas. Leave blank to use the upstream name itself. Changes apply immediately after saving.</p>
                 <details><summary data-i18n="clientExamples">Client configuration examples and compatibility notes</summary><pre id="client-config-examples" class="response-output"></pre><p class="field-hint" data-i18n="compatibilityNotes">Images: base64 PNG/JPEG/GIF only, up to 8 images and 5 MiB each. Remote URL fetching is disabled. Compaction items require the same API key. Token counting is estimated. Native hosted web search and previous_response_id are not supported.</p></details>
               </article>
               <article class="panel">
@@ -156,11 +162,12 @@
               <article class="panel">
                 <div class="panel-heading"><h3 data-i18n="inferenceKeys">Inference API keys</h3><span id="api-key-count" class="badge neutral">—</span></div>
                 <p id="api-key-env-notice" class="notice warning" data-i18n="envKeyNotice" hidden>API keys are managed by QUICKPROXY_API_KEYS. Update the service environment to rotate them.</p>
-                <p class="muted" data-i18n="keysHint">Existing keys are never sent to the browser. Leave blank to keep them; new values replace all keys.</p>
+                <div id="current-api-keys" class="key-list"></div>
+                <p class="muted" data-i18n="keysHint">Leave the replacement field blank to keep the current keys; new values replace all keys.</p>
                 <label for="replacement-api-keys" data-i18n="replacementKeys">Replacement keys (one per line, optional)</label>
                 <textarea id="replacement-api-keys" rows="3" autocomplete="off" spellcheck="false"></textarea>
                 <button id="generate-api-key" class="button" type="button" data-i18n="generateKey">Generate a replacement API key</button>
-                <p class="field-hint" data-i18n="generateKeyHint">Copy the generated key before saving. Saving replaces existing keys; keys cannot be retrieved later.</p>
+                <p class="field-hint" data-i18n="generateKeyHint">Saving replaces existing keys. The new key takes effect after a restart.</p>
                 <label class="checkbox-label" for="clear-api-keys"><input id="clear-api-keys" type="checkbox"><span data-i18n="clearAllKeys">Clear all API keys (disable key authentication for inference)</span></label>
               </article>
               <div class="save-bar"><span class="muted" data-i18n="saveHint">After a successful save, restart the service to apply the new settings.</span><button id="save-config" class="button primary" type="submit" data-i18n="saveSettings">Save settings</button></div>
@@ -174,7 +181,7 @@
                 <h3 data-i18n="sendMessage">Send a message</h3>
                 <div><label for="playground-protocol" data-i18n="protocol">Protocol</label><select id="playground-protocol"><option value="chat">Chat Completions</option><option value="responses">Responses</option><option value="messages">Claude Messages</option></select></div>
                 <div><label for="playground-model" data-i18n="modelAlias">Model alias</label><select id="playground-model" required></select></div>
-                <div><label for="playground-api-key" data-i18n="inferenceKeyLabel">Inference API key (not the administrator password)</label><input id="playground-api-key" type="password" autocomplete="off"><p id="playground-auth-hint" class="field-hint" data-i18n="keyMemoryHint">The key stays in this page's memory and is cleared on sign-out.</p></div>
+                <div><label for="playground-api-key" data-i18n="inferenceKeyLabel">Inference API key (not the administrator password)</label><input id="playground-api-key" type="password" autocomplete="off"><p id="playground-auth-hint" class="field-hint" data-i18n="keyMemoryHint">The current inference key is filled in by default.</p></div>
                 <div><label for="playground-prompt" data-i18n="message">Message</label><textarea id="playground-prompt" rows="10" required></textarea></div>
                 <div class="toolbar"><button id="send-playground" class="button primary" type="submit" data-i18n="sendRequest">Send request</button><button id="cancel-playground" class="button" type="button" data-i18n="cancelRequest" disabled>Cancel request</button></div>
               </form>

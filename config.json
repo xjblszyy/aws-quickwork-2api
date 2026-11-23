@@ -2,18 +2,20 @@
   "addr": "127.0.0.1:8080",
   "database": "data/quickwork.db",
   "api_keys": [],
-  "model_mappings": {
-    "opus5.5": "smart"
-  },
   "models": [
     "smart",
     "fast",
     "balanced",
     "auto"
   ],
+  "model_mappings": {
+    "claude-haiku-5-5": "fast",
+    "claude-opus-5-5": "smart",
+    "claude-sonnet-5-5": "balanced"
+  },
   "default_model": "smart",
-  "request_timeout": "5m",
-  "refresh_before": "10m",
+  "request_timeout": "5m0s",
+  "refresh_before": "10m0s",
   "max_attempts": 3,
   "app_version": "1.2.4660",
   "surface": "QUICK_WORK_DESKTOP_WINDOWS",
@@ -25,12 +27,21 @@
   "chat_agent_id": "",
   "keep_sessions": false,
   "session_reuse": true,
-  "session_ttl": "30m",
+  "session_ttl": "30m0s",
   "oauth": {
     "provider": "social",
     "build_stage": "prod",
     "region": "",
     "callback_port": 18080,
-    "timeout": "1h"
+    "timeout": "1h0m0s"
+  },
+  "webui": {
+    "enabled": true,
+    "session_ttl": "12h0m0s"
+  },
+  "usage": {
+    "enabled": true,
+    "refresh_interval": "5m0s",
+    "max_attempts": 3
   }
 }
